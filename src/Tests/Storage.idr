@@ -105,7 +105,7 @@ isCorrupt (Corrupt _) = True
 isCorrupt _ = False
 
 smallCache : Options
-smallCache = MkOptions 16 4194304 False
+smallCache = MkOptions 16 4194304 False 50000
 
 -- A fresh database. The catalog root (page 1) is an empty tree the tests
 -- can use directly.
@@ -610,7 +610,7 @@ recoveryTests =
       expectError "foreign log" (openDatabase st dir defaultOptions) isCorrupt
 
   , dbTest "recovery: a torn page file is repaired from the log" $ do
-      (st, dir, pg) <- fresh "rec-tornpage.idb" (MkOptions 256 4194304 False)
+      (st, dir, pg) <- fresh "rec-tornpage.idb" (MkOptions 256 4194304 False 50000)
       m <- inTransaction pg (applyOps pg 1 (workload 91 1200 800) empty)
       liftIO (abandonDatabase pg)
       -- Simulate a checkpoint that died while rewriting the root page.
@@ -622,9 +622,9 @@ recoveryTests =
 
   , crashSweep "fault-at-every-write" defaultOptions False
   , crashSweep "torn-write-at-every-write" defaultOptions True
-  , crashSweep "fault-with-checkpoint-per-commit" (MkOptions 256 1 False) False
-  , crashSweep "torn-write-with-checkpoint-per-commit" (MkOptions 256 1 False) True
-  , crashSweep "fault-with-spilling-pool" (MkOptions 8 4194304 False) False
+  , crashSweep "fault-with-checkpoint-per-commit" (MkOptions 256 1 False 50000) False
+  , crashSweep "torn-write-with-checkpoint-per-commit" (MkOptions 256 1 False 50000) True
+  , crashSweep "fault-with-spilling-pool" (MkOptions 8 4194304 False 50000) False
   ]
 
 export

@@ -33,10 +33,12 @@ record Options where
   ||| Take over a lock left behind by a dead process. The caller asserts
   ||| that no other process has the database open.
   breakLock : Bool
+  ||| Rows a sort keeps in memory before it writes a run to disk.
+  sortMemoryRows : Nat
 
 public export
 defaultOptions : Options
-defaultOptions = MkOptions 256 4194304 False
+defaultOptions = MkOptions 256 4194304 False 50000
 
 export
 record Pager where

@@ -149,6 +149,11 @@ sub b off len =
     else throw (Corrupt ("slice " ++ show off ++ "+" ++ show len
                           ++ " outside " ++ show b.len ++ " bytes"))
 
+||| The buffer, offset and length behind a view, for handing to file I/O.
+export
+rawParts : Bytes -> (Buffer, Int, Int)
+rawParts b = (b.buf, b.off, b.len)
+
 ||| Copy the bytes into `dst` at `dstOff`. The destination range is the
 ||| caller's responsibility.
 export

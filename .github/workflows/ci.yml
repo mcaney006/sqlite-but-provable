@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Idris 2 and SQLite
+        run: |
+          brew install idris2 sqlite
+          idris2 --version
+          # The sources are checked against this release only.
+          idris2 --version | grep -q '0\.8\.0'
+
+      - name: Build
+        run: make build
+
+      - name: Banned constructs
+        run: make check-rules
+
+      - name: Unit, storage, SQL and typed-API tests
+        run: make test-unit
+
+      - name: Programs that must and must not compile
+        run: make test-typecheck
+
+      - name: Differential tests against sqlite3
+        run: make test-differential
+
+      - name: SIGKILL crash test
+        run: ROUNDS=15 make test-crash
+
+      - name: Demonstration script
+        run: make demo

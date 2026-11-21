@@ -1,0 +1,46 @@
+package idrisql
+version = 0.1.0
+brief = "An embedded SQL database engine written in Idris 2"
+langversion >= 0.8.0
+
+depends = base, linear
+
+sourcedir = "src"
+
+modules = IdrisQL
+        , IdrisQL.Catalog.Catalog
+        , IdrisQL.Catalog.Record
+        , IdrisQL.Catalog.Schema
+        , IdrisQL.CLI.Shell
+        , IdrisQL.Engine
+        , IdrisQL.Error
+        , IdrisQL.Index.BPlusTree
+        , IdrisQL.Index.Cursor
+        , IdrisQL.Index.KeyCodec
+        , IdrisQL.Index.Node
+        , IdrisQL.Options
+        , IdrisQL.Query.Algebra
+        , IdrisQL.Query.Executor
+        , IdrisQL.Query.Optimizer
+        , IdrisQL.Query.Planner
+        , IdrisQL.Query.Sorter
+        , IdrisQL.Query.Statement
+        , IdrisQL.SQL.AST
+        , IdrisQL.SQL.Analyzer
+        , IdrisQL.SQL.Lexer
+        , IdrisQL.SQL.Parser
+        , IdrisQL.SQL.Token
+        , IdrisQL.SQL.Typed
+        , IdrisQL.Storage.BufferPool
+        , IdrisQL.Storage.Codec
+        , IdrisQL.Storage.FileIO
+        , IdrisQL.Storage.Format
+        , IdrisQL.Storage.Page
+        , IdrisQL.Storage.Pager
+        , IdrisQL.Storage.Recovery
+        , IdrisQL.Storage.WAL
+        , IdrisQL.Transaction.State
+        , IdrisQL.Types
+
+main = Main
+executable = idrisql

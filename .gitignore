@@ -1,0 +1,7 @@
+build/
+build-*/
+*.ttc
+*.ttm
+*.idb/
+/tmp/
+.DS_Store

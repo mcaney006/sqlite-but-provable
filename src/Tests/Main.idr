@@ -3,13 +3,17 @@ module Tests.Main
 import Data.List
 import System
 import Tests.Harness
+import Tests.Sql
 import Tests.SqlFrontend
 import Tests.Storage
+import Tests.Typed
 
 suites : List (String, List Test)
 suites =
   [ ("sql-frontend", sqlFrontendTests)
   , ("storage", storageTests)
+  , ("sql", sqlTests)
+  , ("typed", typedTests)
   ]
 
 ||| Run every suite, or only those named on the command line. Exits non-zero

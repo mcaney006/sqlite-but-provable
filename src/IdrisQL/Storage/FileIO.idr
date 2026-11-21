@@ -6,23 +6,12 @@ import System.Directory
 import System.File
 import System.File.Buffer
 import IdrisQL.Error
+import public IdrisQL.Options
 
 -- The only module that touches the filesystem. It offers exactly what the
 -- Idris 2 base library offers: whole-file read, truncating write, append,
 -- flush to the operating system, remove, and directory create/list/remove.
 -- There is no seek, rename, fsync or file lock (docs/PLATFORM_CONSTRAINTS.md).
-
-||| What a completed log flush guarantees. This build has one level because
-||| base exposes `fflush` and nothing stronger.
-public export
-data Durability
-  = ||| The bytes were handed to the operating system. They survive the death
-    ||| of this process. A power failure or kernel crash can still lose them.
-    FlushedToOS
-
-public export
-Show Durability where
-  show FlushedToOS = "flushed to the operating system (no fsync)"
 
 ||| Storage access with counters and an optional injected fault. Every
 ||| mutating operation is charged against `budget`; once it reaches zero the

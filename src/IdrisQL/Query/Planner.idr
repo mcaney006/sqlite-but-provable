@@ -273,11 +273,34 @@ accessOrder : (tbl : TableDef) -> Access o -> List Nat
 accessOrder tbl (IndexScan idx eqs _) = drop (length eqs) idx.columns ++ rowidOrder tbl
 accessOrder tbl _ = rowidOrder tbl
 
+-- The inner column that output column `i` of a projection copies, if it
+-- is a plain column.
+copiedColumn : Exprs ctx out -> (i : Nat) -> Maybe Nat
+copiedColumn [] _ = Nothing
+copiedColumn (Col _ el :: _) Z = Just (elemToNat el)
+copiedColumn (_ :: _) Z = Nothing
+copiedColumn (_ :: es) (S i) = copiedColumn es i
+
+-- The output position of a projection that copies inner column `c`.
+copyOf : Exprs ctx out -> (c : Nat) -> (at : Nat) -> Maybe Nat
+copyOf [] _ _ = Nothing
+copyOf (Col _ el :: es) c at = if elemToNat el == c then Just at else copyOf es c (S at)
+copyOf (_ :: es) c at = copyOf es c (S at)
+
+-- An ordering of the input, restated in output columns. It ends at the
+-- first ordering column the projection drops.
+throughProject : Exprs ctx out -> List Nat -> List Nat
+throughProject es [] = []
+throughProject es (c :: cs) = case copyOf es c 0 of
+  Just i => i :: throughProject es cs
+  Nothing => []
+
 -- The columns a plan's output is already ordered by, ascending.
 planOrder : PPlan ctx -> List Nat
 planOrder (PScan tbl _ _ access) = accessOrder tbl access
 planOrder (PFilter _ p) = planOrder p
 planOrder (PLimit _ _ p) = planOrder p
+planOrder (PProject es p) = throughProject es (planOrder p)
 planOrder _ = []
 
 sortedAlready : List (SortKey ctx) -> PPlan ctx -> Bool
@@ -287,12 +310,28 @@ sortedAlready keys p = case keyColumns keys of
 
 -- When rows are wanted in the order of an index and only a few of them
 -- (a LIMIT is present), walk the index instead of sorting the table.
-orderedScan : Schema -> List (SortKey ctx) -> PPlan ctx -> Maybe (PPlan ctx)
-orderedScan schema keys (PScan tbl label needed FullScan) = do
-  cols <- keyColumns keys
+orderedScan : Schema -> (cols : List Nat) -> PPlan ctx -> Maybe (PPlan ctx)
+orderedScan schema cols (PScan tbl label needed FullScan) = do
   idx <- find (\i => not (isNil cols) && isPrefixOf cols i.columns) (tableIndexes schema tbl.name)
   Just (PScan tbl label needed (IndexScan idx [] Nothing))
-orderedScan schema keys _ = Nothing
+orderedScan schema cols (PProject es p) = do
+  inner <- traverse (copiedColumn es) cols
+  map (PProject es) (orderedScan schema inner p)
+orderedScan schema cols _ = Nothing
+
+-- The input column a projection copies into output position `el`.
+copiedElem : Exprs inner mid -> Elem t mid -> Maybe (Elem t inner)
+copiedElem (Col _ el :: _) Here = Just el
+copiedElem (_ :: _) Here = Nothing
+copiedElem (_ :: es) (There el) = copiedElem es el
+
+-- A projection. Over a projection that only copies columns, the two are
+-- merged, so a join whose sides were swapped costs no extra row copy.
+project : {mid : List SqlType} -> Exprs mid out -> PPlan mid -> PPlan out
+project es (PProject cs p) = case renameExprs (copiedElem cs) es of
+  Just direct => PProject direct p
+  Nothing => PProject es (PProject cs p)
+project es p = PProject es p
 
 exprKeys : Exprs ctx gs -> List (SortKey ctx)
 exprKeys [] = []
@@ -379,7 +418,7 @@ mutual
   plan schema ctx needed few (LFilter pred child) =
     PFilter pred (plan schema ctx (addCols (colsUsed pred) needed) few child)
   plan schema _ needed few (LProject {ctx = inner} es child) =
-    PProject es (plan schema inner (fromList (exprsCols es)) few child)
+    project es (plan schema inner (fromList (exprsCols es)) few child)
   plan schema _ needed few (LJoin {a} {b} kind l r on) =
     join schema a b (addCols (maybe [] colsUsed on) needed) kind l r on
   plan schema _ needed few (LAggregate {ctx = inner} keys aggs child) =
@@ -390,7 +429,7 @@ mutual
   plan schema ctx needed few (LSort keys child) =
     let input = plan schema ctx (addCols (concatMap (\k => colsUsed k.expr) keys) needed) False child
     in if sortedAlready keys input then input
-       else case (if few then orderedScan schema keys input else Nothing) of
+       else case (if few then keyColumns keys >>= \cols => orderedScan schema cols input else Nothing) of
               Just walk => walk
               Nothing => PSort keys input
   plan schema ctx needed few (LDistinct child) =

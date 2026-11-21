@@ -719,3 +719,8 @@ checkpointNow eng = do
   active <- liftIO (inTxn eng.pager)
   when' active (TxError "cannot checkpoint inside a transaction")
   checkpoint eng.pager
+
+||| Sort runs written to disk since the database was opened.
+export
+sortRunsWritten : Engine -> IO Int
+sortRunsWritten eng = readIORef eng.sorter.runsWritten

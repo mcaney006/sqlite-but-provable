@@ -5,6 +5,7 @@ import Data.List
 import Data.So
 import System
 import IdrisQL.Error
+import public IdrisQL.Options
 import IdrisQL.Storage.BufferPool
 import IdrisQL.Storage.Codec
 import IdrisQL.Storage.FileIO
@@ -22,23 +23,6 @@ import IdrisQL.Storage.WAL
 --
 -- The pager owns page allocation, the page-level transaction (begin, commit,
 -- rollback), checkpoints, and recovery at open.
-
-public export
-record Options where
-  constructor MkOptions
-  ||| Buffer pool capacity in pages.
-  cachePages : Int
-  ||| A commit that leaves the log at least this large triggers a checkpoint.
-  checkpointBytes : Int
-  ||| Take over a lock left behind by a dead process. The caller asserts
-  ||| that no other process has the database open.
-  breakLock : Bool
-  ||| Rows a sort keeps in memory before it writes a run to disk.
-  sortMemoryRows : Nat
-
-public export
-defaultOptions : Options
-defaultOptions = MkOptions 256 4194304 False 50000
 
 export
 record Pager where

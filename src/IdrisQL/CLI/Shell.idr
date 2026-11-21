@@ -188,6 +188,9 @@ runOne : Engine -> ShellConfig -> String -> IO Bool
 runOne eng cfg sql = do
   before <- inTransaction eng
   r <- runDB (execute eng sql [] >>= report cfg)
+  -- A reader of a pipe or file sees each statement's output when the
+  -- statement is done, not when the buffer happens to fill.
+  fflush stdout
   case r of
     Right () => pure True
     Left e => do

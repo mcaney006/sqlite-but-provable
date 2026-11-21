@@ -21,6 +21,7 @@ usage = """
     --file PATH         run the statements in a file and exit
     --mode list|table   output format (default: table on a terminal, list otherwise)
     --cache PAGES       buffer pool size in 4 KiB pages (default 256)
+    --checkpoint BYTES  log size that triggers a checkpoint (default 4194304)
     --break-lock        take over a lock left by a dead process
     --help              this text
     --version           print the version
@@ -45,6 +46,9 @@ parseArgs ("--mode" :: "table" :: rest) a = parseArgs rest ({ mode := Just Table
 parseArgs ("--cache" :: n :: rest) a = case parsePositive {a = Int} n of
   Just pages => parseArgs rest ({ options := { cachePages := pages } a.options } a)
   Nothing => Left ("--cache needs a number of pages, got " ++ n)
+parseArgs ("--checkpoint" :: n :: rest) a = case parsePositive {a = Int} n of
+  Just bytes => parseArgs rest ({ options := { checkpointBytes := bytes } a.options } a)
+  Nothing => Left ("--checkpoint needs a number of bytes, got " ++ n)
 parseArgs ("--break-lock" :: rest) a = parseArgs rest ({ options := { breakLock := True } a.options } a)
 parseArgs (arg :: rest) a =
   if isPrefixOf "--" arg then Left ("unknown or incomplete option " ++ arg)

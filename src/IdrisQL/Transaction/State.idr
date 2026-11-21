@@ -2,23 +2,26 @@ module IdrisQL.Transaction.State
 
 import Control.Linear.LIO
 import IdrisQL.Engine
-import IdrisQL.Error
-import IdrisQL.Options
 import IdrisQL.SQL.AST
 import IdrisQL.SQL.Parser
-import IdrisQL.Types
+
+import public IdrisQL.Error
+import public IdrisQL.Options
+import public IdrisQL.Types
 
 -- A connection whose type says whether a transaction is open, held
--- linearly. The compiler then rejects programs that:
+-- linearly inside a session. The compiler rejects a session that:
 --
---   commit or roll back when no transaction is open,
---   begin a transaction inside another,
---   close a connection with a transaction still open,
---   use a connection after closing it, or
---   drop a connection without closing it.
+--   commits or rolls back when no transaction is open,
+--   begins a transaction inside another,
+--   ends with a transaction still open,
+--   uses a connection again after an operation has consumed it, or
+--   ends without handing its connection back.
 --
--- tests/typecheck holds one program for each of these that must fail to
--- compile.
+-- The last point does not rest on the linearity checker alone. A session
+-- returns a `Closed`, and the only way to make one is `end`, which takes
+-- the idle connection. tests/typecheck holds a program for each rejected
+-- case; docs/PROOFS.md says what each guarantee rests on.
 
 public export
 data TxState = Idle | Active
@@ -28,11 +31,6 @@ data TxState = Idle | Active
 export
 data Conn : TxState -> Type where
   MkConn : Engine -> Conn s
-
-public export
-data Opened : Type where
-  Connected : (1 conn : Conn Idle) -> Opened
-  Refused   : (error : DbError) -> Opened
 
 ||| The result of an operation, together with the connection in the state
 ||| the operation left it in. A failure always leaves it idle: if a
@@ -50,18 +48,30 @@ data Reply
     Count Nat
   | Finished
 
+||| What a session returns: its result, and proof that it gave back an
+||| idle connection. `end` is the only way to make one.
 export
-connect : (path : String) -> Options -> L1 IO Opened
-connect path opts = do
-  r <- liftIO1 (runDB (openEngine path opts))
-  case r of
-    Right eng => pure1 (Connected (MkConn eng))
-    Left e => pure1 (Refused e)
+data Closed : Type -> Type where
+  MkClosed : (result : a) -> (1 conn : Conn Idle) -> Closed a
 
-||| Close the connection. Only an idle connection can be closed.
+||| End the session. Only an idle connection can end it, so a session
+||| cannot finish with a transaction open.
 export
-disconnect : (1 conn : Conn Idle) -> L IO (Either DbError ())
-disconnect (MkConn eng) = liftIO1 (runDB (closeEngine eng))
+end : (1 conn : Conn Idle) -> (result : a) -> L1 IO (Closed a)
+end conn result = pure1 (MkClosed result conn)
+
+||| Open the database at `path`, run `session` on its connection, and close
+||| it. The result is `Left` when the database cannot be opened or closed.
+export
+withDatabase : (path : String) -> Options -> (session : (1 conn : Conn Idle) -> L1 IO (Closed a)) ->
+               IO (Either DbError a)
+withDatabase path opts session = do
+  Right eng <- runDB (openEngine path opts)
+    | Left e => pure (Left e)
+  run $ do
+    MkClosed result (MkConn used) <- session (MkConn eng)
+    closed <- liftIO1 (runDB (closeEngine used))
+    pure (map (const result) closed)
 
 -- Roll back the transaction a failed operation may have left open.
 settle : Engine -> IO ()

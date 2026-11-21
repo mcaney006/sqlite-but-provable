@@ -143,6 +143,15 @@ rowidOrder tbl = toList tbl.rowidColumn
 indexFetchCost : Double
 indexFetchCost = 3
 
+-- Fractions of a table assumed to pass a comparison when no statistics
+-- say otherwise: one row in a hundred for an equality, three in ten for
+-- an inequality.
+equalitySelectivity : Double
+equalitySelectivity = 0.01
+
+rangeSelectivity : Double
+rangeSelectivity = 0.3
+
 rowidChoice : (tbl : TableDef) -> List (Sarg o) -> Maybe (Choice o)
 rowidChoice tbl sargs = do
   c <- tbl.rowidColumn
@@ -151,7 +160,7 @@ rowidChoice tbl sargs = do
     Nothing =>
       let lo = boundAt TInt isLower c sargs
           hi = boundAt TInt isUpper c sargs
-          rows = max 1 (tableRows tbl * 0.3)
+          rows = max 1 (tableRows tbl * rangeSelectivity)
       in if isNothing lo && isNothing hi then Nothing
          else Just (MkChoice (RowidRange lo hi) rows rows [c])
 
@@ -182,8 +191,8 @@ indexChoice tbl sargs idx =
       full = matched == length idx.columns
       perKey = if full && idx.unique then 1
                else if full && idx.distinctEstimate > 0 then total' / cast idx.distinctEstimate
-               else total' * power 0.1 matched
-      rows = max 1 (if isJust range then perKey * 0.3 else perKey)
+               else total' * power equalitySelectivity matched
+      rows = max 1 (if isJust range then perKey * rangeSelectivity else perKey)
   in if matched == 0 && isNothing range then Nothing
      else Just (MkChoice (IndexScan idx eqs range) rows (rows * indexFetchCost + 1)
                          (drop matched idx.columns ++ rowidOrder tbl))
@@ -240,9 +249,9 @@ aggsCols (ACons a rest) = aggCols a ++ aggsCols rest
 -- Estimates.
 
 selectivity : TExpr ctx TBool -> Double
-selectivity (Cmp _ Eq _ _) = 0.1
-selectivity (Cmp _ Ne _ _) = 0.9
-selectivity (Cmp _ _ _ _) = 0.3
+selectivity (Cmp _ Eq _ _) = equalitySelectivity
+selectivity (Cmp _ Ne _ _) = 1 - equalitySelectivity
+selectivity (Cmp _ _ _ _) = rangeSelectivity
 selectivity (And a b) = selectivity a * selectivity b
 selectivity _ = 0.5
 

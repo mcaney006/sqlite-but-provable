@@ -197,12 +197,20 @@ runOne eng cfg sql = do
       pure False
 
 ||| Run every statement in `text`, stopping at the first failure unless the
-||| shell is interactive. Returns False when a statement failed.
+||| shell is interactive. Text that starts with a dot is one dot command.
+||| Returns False when a statement failed.
 export
 runText : Engine -> ShellConfig -> String -> IO Bool
 runText eng cfg text =
-  let (stmts, rest) = splitStatements text
-  in go (stmts ++ (if trim rest == "" then [] else [rest]))
+  if isPrefixOf "." (trim text)
+    then do
+      cfgRef <- newIORef cfg
+      r <- runDB (dotCommand eng cfgRef (trim text))
+      case r of
+        Right _ => pure True
+        Left e => complain ("Error: " ++ show e) >> pure False
+    else let (stmts, rest) = splitStatements text
+         in go (stmts ++ (if trim rest == "" then [] else [rest]))
   where
     go : List String -> IO Bool
     go [] = pure True

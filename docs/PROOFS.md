@@ -167,7 +167,7 @@ Figures are from the reference machine in `docs/PLATFORM_CONSTRAINTS.md`.
 | Pages, codecs, pager, free list, B+ tree, recovery | `storage` suite | 44 tests, including the next two rows |
 | B+ tree agrees with a sorted-map model under random inserts, overwrites and deletes, and validates afterwards | `storage` suite, seeds 20261121 and 7 | 6,000 operations per seed |
 | Recovery leaves exactly the committed transactions when any single write fails or is torn | `storage` suite crash sweeps | 5 configurations, every write of the transaction in each |
-| SQL semantics: three-valued logic, constraints, joins, aggregates, ordering, parameters, transactions, DDL rollback | `sql` suite | 45 tests |
+| SQL semantics: three-valued logic, constraints, joins, aggregates, ordering, parameters, transactions, DDL rollback | `sql` suite | 47 tests |
 | Queries return the same rows with and without indexes, and after `ANALYZE` | `sql` suite | 14 queries, 3 indexes |
 | Random statements agree with a model, in autocommit and inside transactions | `sql` suite, seed 20261121 | 1,100 statements |
 | EXPLAIN prints the plan the planner chose | `sql` suite | Exact plan text for 14 statements |

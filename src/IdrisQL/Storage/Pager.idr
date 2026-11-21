@@ -132,23 +132,29 @@ readMeta pool = withPage pool 0 $ \p => do
 guarded : Pager -> DB a -> DB a
 guarded pg act = catchDB act (\e => writeIORef pg.poisoned True >> throw e)
 
-||| Write every committed page to its page file, then truncate the log.
-||| A crash before the truncation leaves the log intact, and recovery
-||| redoes the same images.
-export
-checkpoint : Pager -> DB ()
-checkpoint pg = guarded pg $ do
-  _ <- flushCommitted pg.pool
-  salt <- liftIO (walSalt pg.wal)
-  resetWal pg.wal (salt + 1)
-  modifyIORef pg.checkpointCount (+ 1)
-
 ||| Fails once a storage failure has left the pool in an unknown state.
 export
 ensureUsable : Pager -> DB ()
 ensureUsable pg = do
   bad <- readIORef pg.poisoned
   when' bad (IOFailure "an earlier storage failure left this connection unusable; reopen the database")
+
+||| Write every committed page to its page file, then truncate the log.
+||| A crash before the truncation leaves the log intact, and recovery
+||| redoes the same images.
+export
+checkpoint : Pager -> DB ()
+checkpoint pg = do
+  -- The log may hold the only copy of a committed page; it is emptied only
+  -- by a connection whose pool is known to match the disk.
+  ensureUsable pg
+  active <- readIORef pg.txnOpen
+  when' active (TxError "cannot checkpoint inside a transaction")
+  guarded pg $ do
+    _ <- flushCommitted pg.pool
+    salt <- liftIO (walSalt pg.wal)
+    resetWal pg.wal (salt + 1)
+    modifyIORef pg.checkpointCount (+ 1)
 
 export
 beginTxn : Pager -> DB ()
@@ -169,6 +175,7 @@ commitTxn : Pager -> DB ()
 commitTxn pg = do
   active <- readIORef pg.txnOpen
   when' (not active) (TxError "no transaction is open")
+  ensureUsable pg
   changed <- liftIO (txnPageIds pg.pool)
   if isNil changed
     then writeIORef pg.txnOpen False
@@ -274,13 +281,15 @@ export
 createDatabase : Storage -> (dir : String) -> Options -> DB Pager
 createDatabase st dir opts = do
   _ <- makeDir dir
-  present <- liftIO (pathExists (storePath dir 0))
-  when' present (IOFailure (dir ++ " already holds a database"))
   acquireLock dir opts
   catchDB build (\e => liftIO (removeDirectory (lockPath dir)) >> throw e)
   where
     build : DB Pager
     build = do
+      -- Checked under the lock, so that two processes cannot both find
+      -- the directory empty.
+      present <- liftIO (pathExists (storePath dir 0))
+      when' present (IOFailure (dir ++ " already holds a database"))
       _ <- makeDir (dir ++ "/p")
       _ <- makeDir (dir ++ "/spill")
       little <- hostLittleEndian

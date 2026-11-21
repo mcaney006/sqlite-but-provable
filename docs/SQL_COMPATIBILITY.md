@@ -64,7 +64,7 @@ division or remainder by zero gives NULL.
 |---|---|
 | `PRIMARY KEY` on one INTEGER column | That column is the rowid. Omitted or NULL on insert, it is assigned one more than the largest rowid in the table, and at least 1. |
 | Other `PRIMARY KEY` | NOT NULL on each column and a unique index named `<table>_pkey` |
-| `UNIQUE` | A unique index named `<table>_<columns>_key`. Rows with a NULL in the key do not conflict. |
+| `UNIQUE` | A unique index named `<table>_<columns>_key`, with a number appended if two constraints of one table would get the same name. Rows with a NULL in the key do not conflict. |
 | `NOT NULL` | Checked on insert and update |
 | `DEFAULT` | A constant expression, used when an insert names other columns |
 | `CHECK` | Evaluated on insert and update. A result of NULL passes. |

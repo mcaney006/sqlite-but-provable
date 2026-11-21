@@ -108,11 +108,15 @@ writeFileFrom st path buf len = do
   r <- writeBufferData h buf 0 (case v of
                                   Proceed => len
                                   Tear => len `div` 2)
+  -- The bytes may still be in the handle's buffer; a full disk shows up
+  -- only when they are flushed.
+  fflush h
+  bad <- fileError h
   closeFile h
   case (r, v) of
     (Left (e, _), _) => throw (ioErr ("write " ++ path) e)
     (Right (), Tear) => throw (InjectedFault ("torn write " ++ path))
-    (Right (), Proceed) => pure ()
+    (Right (), Proceed) => when' bad (IOFailure ("write " ++ path ++ ": the flush failed"))
 
 export
 record LogFile where

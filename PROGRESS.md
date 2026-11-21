@@ -18,7 +18,7 @@ State of the repository on 2026-11-21.
 | Shell, library API, typed session API | `sql` and `typed` suites, `tests/typecheck` |
 | CI | `.github/workflows/ci.yml` |
 
-`make test` runs all of it: 282 unit tests, 11 compile-time cases, 180
+`make test` runs all of it: 284 unit tests, 11 compile-time cases, 180
 differential checks and the crash test.
 
 ## Not built

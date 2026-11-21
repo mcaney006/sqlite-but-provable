@@ -264,6 +264,20 @@ constraintTests =
       expectRows eng "SELECT n FROM tag WHERE name = 'b'" ["2"]
       rejects eng "DROP INDEX tag_pkey" isSemantic
 
+  , sqlTest "constraints whose generated index names collide are both enforced" $ \eng => do
+      exec eng "CREATE TABLE t (a INTEGER, b INTEGER, a_b INTEGER UNIQUE, UNIQUE (a, b))"
+      exec eng "INSERT INTO t VALUES (1, 1, 10), (1, 2, 20)"
+      rejects eng "INSERT INTO t VALUES (2, 2, 10)" isConstraint
+      rejects eng "INSERT INTO t VALUES (1, 2, 30)" isConstraint
+      schema <- liftIO (currentSchema eng)
+      expect (length (tableIndexes schema "t") == 2) "one of the two unique indexes is missing"
+
+  , sqlTest "NaN in a bound parameter is stored as NULL" $ \eng => do
+      exec eng "CREATE TABLE f (id INTEGER PRIMARY KEY, x REAL)"
+      exec eng "CREATE INDEX f_x ON f (x)"
+      _ <- execute eng "INSERT INTO f VALUES (1, ?)" [VReal (0.0 / 0.0)]
+      expectRows eng "SELECT COUNT(*) FROM f WHERE x IS NULL" ["1"]
+
   , sqlTest "rowids: assigned, explicit, and never reused within a table" $ \eng => do
       exec eng "CREATE TABLE r (id INTEGER PRIMARY KEY, v TEXT)"
       exec eng "INSERT INTO r (v) VALUES ('a'), ('b')"

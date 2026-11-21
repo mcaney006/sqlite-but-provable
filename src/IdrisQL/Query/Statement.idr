@@ -290,7 +290,20 @@ planCreateTable name specs cons = do
                                Nothing => Left (SemanticError ("constraint names unknown column " ++ n))) cols
                 Right (MkIndexDef 0 iname name 0 positions True True (-1))) keySets
   Right ({ checks := checks, foreignKeys := fks } draft,
-         nubBy (\a, b => a.columns == b.columns) indexes)
+         distinctNames [] (nubBy (\a, b => a.columns == b.columns) indexes))
+  where
+    -- UNIQUE (a_b) and UNIQUE (a, b) would both be named <table>_a_b_key.
+    -- A repeated name gets the lowest number that makes it new.
+    numbered : List String -> String -> Nat -> Nat -> String
+    numbered taken base n Z = base ++ show n
+    numbered taken base n (S fuel) =
+      if (base ++ show n) `elem` taken then numbered taken base (S n) fuel else base ++ show n
+
+    distinctNames : List String -> List IndexDef -> List IndexDef
+    distinctNames taken [] = []
+    distinctNames taken (i :: rest) =
+      let fresh = if i.name `elem` taken then numbered taken i.name 2 (length taken) else i.name
+      in { name := fresh } i :: distinctNames (fresh :: taken) rest
 
 -- Schema as SQL text, for the shell's .schema command.
 

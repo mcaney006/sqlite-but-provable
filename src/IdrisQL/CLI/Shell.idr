@@ -239,6 +239,14 @@ runInput eng cfg input = do
       putStr (if pending == "" then "idrisql> " else "    ...> ")
       fflush stdout
 
+    -- Run statements in order. A script stops at the first failure, so
+    -- that nothing after it on the same line runs.
+    runEach : ShellConfig -> List String -> IO Bool
+    runEach now [] = pure True
+    runEach now (stmt :: rest) = do
+      good <- runOne eng now stmt
+      if good || cfg.interactive then map (good &&) (runEach now rest) else pure False
+
     loop : IORef ShellConfig -> (pending : String) -> (ok : Bool) -> IO Bool
     loop cfgRef pending ok = do
       prompt pending
@@ -258,8 +266,7 @@ runInput eng cfg input = do
         else do
           let (stmts, rest) = splitStatements (pending ++ line)
           now <- readIORef cfgRef
-          results <- traverse (runOne eng now) stmts
-          let good = all id results
+          good <- runEach now stmts
           if good || cfg.interactive
             then loop cfgRef (if trim rest == "" then "" else rest) (ok && good)
             else pure False

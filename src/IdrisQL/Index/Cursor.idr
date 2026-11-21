@@ -54,6 +54,8 @@ step c = do
     else do
       slot <- readIORef c.slotRef
       r <- the (DB (Either LeafCell Int)) $ withPage (pagerPool c.pg) leaf $ \p => do
+        t <- liftIO (pageType p)
+        when' (t /= ptLeaf) (Corrupt ("leaf chain reaches page " ++ show leaf ++ " of type " ++ show t))
         n <- liftIO (slotCount p)
         if slot < n then map Left (readLeafCell p slot)
                     else map Right (liftIO (rightPointer p))

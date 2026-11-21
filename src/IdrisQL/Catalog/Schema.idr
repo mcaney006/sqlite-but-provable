@@ -117,7 +117,10 @@ codeType 5 = pure TBool
 codeType n = throw (Corrupt ("unknown column type code " ++ show n))
 
 putList : Builder -> (a -> DB ()) -> List a -> DB ()
-putList bd f xs = putU16 bd (cast (length xs)) >> traverse_ f xs
+putList bd f xs = do
+  when' (length xs > 65535) (Unsupported "more than 65,535 entries in one catalog list")
+  putU16 bd (cast (length xs))
+  traverse_ f xs
 
 takeList : Decoder -> DB a -> DB (List a)
 takeList d f = do

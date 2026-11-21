@@ -128,7 +128,8 @@ export
 fromValue : (t : SqlType) -> Value -> Maybe (Cell t)
 fromValue _ VNull = Just Nothing
 fromValue TInt (VInt x) = Just (Just x)
-fromValue TReal (VReal x) = Just (Just x)
+-- NaN is not a SQL value: it is stored as NULL, as arithmetic results are.
+fromValue TReal (VReal x) = Just (if x == x then Just x else Nothing)
 fromValue TReal (VInt x) = Just (Just (cast x))
 fromValue TText (VText x) = Just (Just x)
 fromValue TBlob (VBlob x) = Just (Just x)

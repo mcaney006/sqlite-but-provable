@@ -8,7 +8,7 @@ import System.File.Buffer
 import IdrisQL.Error
 import public IdrisQL.Options
 
--- The only module that touches the filesystem. It offers exactly what the
+-- The only module that reads or writes database files. It offers exactly what the
 -- Idris 2 base library offers: whole-file read, truncating write, append,
 -- flush to the operating system, remove, and directory create/list/remove.
 -- There is no seek, rename, fsync or file lock (docs/PLATFORM_CONSTRAINTS.md).
@@ -170,7 +170,16 @@ readSome : File -> Buffer -> (len : Int) -> DB Int
 readSome h buf len = do
   Right n <- readBufferData h buf 0 len
     | Left e => throw (ioErr "read" e)
+  -- A read error also shows up as a short count; it must not be taken for
+  -- the end of the file.
+  when (n < len) $ do
+    bad <- fileError h
+    when' bad (IOFailure "read error")
   pure n
+
+export
+closeRead : HasIO io => File -> io ()
+closeRead h = closeFile h
 
 ||| Create a directory. True when it was created, False when it already
 ||| existed. `mkdir` is atomic, which makes this usable as a lock.

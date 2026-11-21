@@ -34,10 +34,12 @@ import IdrisQL.Types
 -- maintenance, and transaction control.
 --
 -- Transactions. Outside BEGIN .. COMMIT every writing statement is its own
--- transaction. A statement that fails while writing rolls back the
--- transaction it is in, including an explicit one; errors found before
--- execution (syntax, names, types, unbound parameters) and errors in
--- queries change nothing and leave an explicit transaction open.
+-- transaction. A writing statement that fails while it runs rolls back the
+-- transaction it is in, including an explicit one. That covers constraint
+-- violations and the name checks of schema statements, which happen at run
+-- time. Errors found when a statement is compiled (syntax, and the names
+-- and types of queries and data changes) and errors in queries change
+-- nothing and leave an explicit transaction open.
 --
 -- Isolation. One connection per database, enforced by the lock directory,
 -- so transactions are serial. A transaction reads its own writes.
@@ -453,19 +455,32 @@ analyze eng = do
 -- Undo the open transaction and everything cached from it.
 abort : Engine -> DB ()
 abort eng = do
-  active <- liftIO (inTxn eng.pager)
-  when active (rollbackTxn eng.pager)
+  -- The engine's own state first, so that it is right even if the pager's
+  -- rollback fails.
   writeIORef eng.explicitTxn False
   writeIORef eng.lastRowids empty
+  modifyIORef eng.generation (+ 1)
+  active <- liftIO (inTxn eng.pager)
+  when active (rollbackTxn eng.pager)
   changed <- readIORef eng.schemaChanged
   when changed $ do
     schema <- loadSchema eng.pager
     writeIORef eng.schemaRef schema
     writeIORef eng.schemaChanged False
-  modifyIORef eng.generation (+ 1)
 
 bail : Engine -> DbError -> DB a
 bail eng e = catchDB (abort eng) (\_ => pure ()) >> throw e
+
+-- Commit the pager's transaction. A failure before the commit point rolls
+-- back; one after it leaves the transaction committed, so the schema the
+-- engine holds is already the right one.
+commitNow : Engine -> DB ()
+commitNow eng = catchDB (commitTxn eng.pager) $ \e => case e of
+  CommittedThenFailed _ => do
+    writeIORef eng.explicitTxn False
+    writeIORef eng.schemaChanged False
+    throw e
+  _ => bail eng e
 
 -- Run a writing statement in the open transaction, or in one of its own.
 writing : Engine -> DB a -> DB a
@@ -475,7 +490,7 @@ writing eng body = do
     else do
       beginTxn eng.pager
       r <- catchDB body (bail eng)
-      catchDB (commitTxn eng.pager) (bail eng)
+      commitNow eng
       writeIORef eng.schemaChanged False
       pure r
 
@@ -491,7 +506,7 @@ commit : Engine -> DB Result
 commit eng = do
   explicit <- readIORef eng.explicitTxn
   when' (not explicit) (TxError "no transaction is open")
-  catchDB (commitTxn eng.pager) (bail eng)
+  commitNow eng
   writeIORef eng.explicitTxn False
   writeIORef eng.schemaChanged False
   pure (Done "COMMIT")
@@ -538,6 +553,7 @@ current eng mine source = do
 
 runCompiled : Engine -> Compiled -> (params : List Value) -> DB Result
 runCompiled eng c params = do
+  ensureUsable eng.pager
   liftE (checkParams (compiledParams c) params)
   modifyIORef eng.statementSeq (+ 1)
   mine <- readIORef eng.statementSeq

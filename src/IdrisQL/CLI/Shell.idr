@@ -196,8 +196,12 @@ runOne eng cfg sql = do
     Left e => do
       complain ("Error: " ++ show e)
       after <- inTransaction eng
-      when (before && not after) (complain "The open transaction was rolled back.")
+      when (before && not after && not (committed e)) (complain "The open transaction was rolled back.")
       pure False
+  where
+    committed : DbError -> Bool
+    committed (CommittedThenFailed _) = True
+    committed _ = False
 
 ||| Run every statement in `text`, stopping at the first failure unless the
 ||| shell is interactive. Text that starts with a dot is one dot command.

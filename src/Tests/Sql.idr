@@ -1,5 +1,6 @@
 module Tests.Sql
 
+import Data.IORef
 import Data.List
 import Data.Maybe
 import Data.SortedMap
@@ -55,6 +56,10 @@ isConstraint _ = False
 isRuntime : DbError -> Bool
 isRuntime (RuntimeError _) = True
 isRuntime _ = False
+
+isIO : DbError -> Bool
+isIO (IOFailure _) = True
+isIO _ = False
 
 isTx : DbError -> Bool
 isTx (TxError _) = True
@@ -525,6 +530,17 @@ txnTests =
       expectRows eng "SELECT COUNT(*) FROM users" ["3"]
       rejects eng "COMMIT" isTx
 
+  , sqlTest "a schema statement that fails inside a transaction rolls it back" $ \eng => do
+      execAll eng shop
+      exec eng "BEGIN"
+      exec eng "INSERT INTO users VALUES (9, 'Zed', 'zed@example.com', 50)"
+      -- Schema statements check their names when they run, so this counts
+      -- as a failed write.
+      rejects eng "DROP TABLE nowhere" isSemantic
+      active <- liftIO (inTransaction eng)
+      expect (not active) "the transaction is still open after a failed DROP TABLE"
+      expectRows eng "SELECT COUNT(*) FROM users" ["3"]
+
   , sqlTest "errors found before execution leave the transaction open" $ \eng => do
       execAll eng shop
       exec eng "BEGIN"
@@ -670,6 +686,78 @@ steps eng base model seed (S k) = do
   model' <- step eng base model r
   steps eng base model' r k
 
+-- Fail each storage write of a transaction in turn, half of them as torn
+-- writes, abandon the connection and reopen. A transaction whose commit was
+-- reported is there, one whose failure was reported is not, and one that
+-- failed after its commit point says so and is there. `lateFaults` says
+-- whether the options make the commit write page files after its commit
+-- point, so that some faults must land there.
+crashSweep : (name : String) -> Options -> (lateFaults : Bool) -> Test
+crashSweep name opts lateFaults = dbTest ("crash at every write of a transaction, " ++ name) $ do
+  let setup = \eng => do
+        exec eng "CREATE TABLE item (id INTEGER PRIMARY KEY, score INTEGER NOT NULL, tag TEXT NOT NULL)"
+        exec eng "CREATE INDEX item_score ON item (score)"
+        exec eng "CREATE UNIQUE INDEX item_tag ON item (tag)"
+        exec eng "BEGIN"
+        for_ (the (List Int) [1 .. 150]) $ \i =>
+          exec eng ("INSERT INTO item VALUES (" ++ show i ++ ", " ++ show (i `mod` 13) ++ ", 'tag" ++ show i ++ "')")
+        exec eng "COMMIT"
+  let change = \eng => do
+        exec eng "BEGIN"
+        exec eng "UPDATE item SET score = score + 100 WHERE id % 3 = 0"
+        exec eng "DELETE FROM item WHERE id % 5 = 0"
+        for_ (the (List Int) [151 .. 220]) $ \i =>
+          exec eng ("INSERT INTO item VALUES (" ++ show i ++ ", 1, 'tag" ++ show i ++ "')")
+        exec eng "CREATE TABLE extra (n INTEGER)"
+        exec eng "INSERT INTO extra VALUES (1), (2)"
+        exec eng "COMMIT"
+  let snapshot = \eng => do
+        a <- rowsOf eng "SELECT id, score, tag FROM item ORDER BY id"
+        b <- liftIO (runDB (rowsOf eng "SELECT n FROM extra ORDER BY n"))
+        pure (a, either (const ["<no table>"]) id b)
+  -- Reference states, and the number of writes the change needs.
+  st0 <- liftIO newStorage
+  path0 <- liftIO (freshPath "sql-crash-probe.idb")
+  eng0 <- openWith st0 path0 opts
+  setup eng0
+  old <- snapshot eng0
+  w0 <- liftIO (storageStats st0)
+  change eng0
+  new <- snapshot eng0
+  w1 <- liftIO (storageStats st0)
+  closeEngine eng0
+  let writes = w1.writeOps - w0.writeOps
+  expect (writes > 30 && old /= new) ("the change made only " ++ show writes ++ " writes")
+  afterCommit <- newIORef (the Nat 0)
+  for_ (the (List Int) [0 .. writes]) $ \k => do
+    st <- liftIO newStorage
+    path <- liftIO (freshPath "sql-crash.idb")
+    eng <- openWith st path opts
+    setup eng
+    liftIO (injectFault st k (k `mod` 2 == 1))
+    r <- liftIO (runDB (change eng))
+    case r of
+      Left (CommittedThenFailed _) => do
+        modifyIORef afterCommit (+ 1)
+        expectError "a statement on a connection that must be reopened"
+          (rowsOf eng "SELECT COUNT(*) FROM item") isIO
+      _ => pure ()
+    liftIO (abandonDatabase (enginePager eng))
+    liftIO (clearFault st)
+    eng2 <- openWith st path opts
+    got <- snapshot eng2
+    problems <- integrityCheck eng2
+    closeEngine eng2
+    let at = " (fault after write " ++ show k ++ " of " ++ show writes ++ ")"
+    expect (isNil problems) ("integrity check after recovery" ++ at ++ ": " ++ show problems)
+    case r of
+      Right () => expect (got == new) ("a committed transaction was lost" ++ at)
+      Left (CommittedThenFailed _) =>
+        expect (got == new) ("a transaction reported as committed was lost" ++ at)
+      Left _ => expect (got == old) ("a transaction reported as failed was kept" ++ at)
+  late <- readIORef afterCommit
+  expect (not lateFaults || late > 0) "no fault landed after the commit point"
+
 workloadTests : List Test
 workloadTests =
   [ sqlTest "random statements agree with a model (seed 20261121)" $ \eng => do
@@ -688,60 +776,8 @@ workloadTests =
       exec eng "ROLLBACK"
       agrees eng m2
 
-  , dbTest "committed SQL state survives a crash at every write of a transaction" $ do
-      let setup = \eng => do
-            exec eng "CREATE TABLE item (id INTEGER PRIMARY KEY, score INTEGER NOT NULL, tag TEXT NOT NULL)"
-            exec eng "CREATE INDEX item_score ON item (score)"
-            exec eng "CREATE UNIQUE INDEX item_tag ON item (tag)"
-            exec eng "BEGIN"
-            for_ (the (List Int) [1 .. 150]) $ \i =>
-              exec eng ("INSERT INTO item VALUES (" ++ show i ++ ", " ++ show (i `mod` 13) ++ ", 'tag" ++ show i ++ "')")
-            exec eng "COMMIT"
-      let change = \eng => do
-            exec eng "BEGIN"
-            exec eng "UPDATE item SET score = score + 100 WHERE id % 3 = 0"
-            exec eng "DELETE FROM item WHERE id % 5 = 0"
-            for_ (the (List Int) [151 .. 220]) $ \i =>
-              exec eng ("INSERT INTO item VALUES (" ++ show i ++ ", 1, 'tag" ++ show i ++ "')")
-            exec eng "CREATE TABLE extra (n INTEGER)"
-            exec eng "INSERT INTO extra VALUES (1), (2)"
-            exec eng "COMMIT"
-      let snapshot = \eng => do
-            a <- rowsOf eng "SELECT id, score, tag FROM item ORDER BY id"
-            b <- liftIO (runDB (rowsOf eng "SELECT n FROM extra ORDER BY n"))
-            pure (a, either (const ["<no table>"]) id b)
-      let opts = MkOptions 16 4194304 False 50000
-      -- Reference states, and the number of writes the change needs.
-      st0 <- liftIO newStorage
-      path0 <- liftIO (freshPath "sql-crash-probe.idb")
-      eng0 <- openWith st0 path0 opts
-      setup eng0
-      old <- snapshot eng0
-      w0 <- liftIO (storageStats st0)
-      change eng0
-      new <- snapshot eng0
-      w1 <- liftIO (storageStats st0)
-      closeEngine eng0
-      let writes = w1.writeOps - w0.writeOps
-      expect (writes > 30 && old /= new) ("the change made only " ++ show writes ++ " writes")
-      for_ (the (List Int) [0 .. writes]) $ \k => do
-        st <- liftIO newStorage
-        path <- liftIO (freshPath "sql-crash.idb")
-        eng <- openWith st path opts
-        setup eng
-        liftIO (injectFault st k (k `mod` 2 == 1))
-        r <- liftIO (runDB (change eng))
-        liftIO (abandonDatabase (enginePager eng))
-        liftIO (clearFault st)
-        eng2 <- openWith st path opts
-        got <- snapshot eng2
-        problems <- integrityCheck eng2
-        closeEngine eng2
-        let at = " (fault after write " ++ show k ++ " of " ++ show writes ++ ")"
-        expect (isNil problems) ("integrity check after recovery" ++ at ++ ": " ++ show problems)
-        case r of
-          Right () => expect (got == new) ("a committed transaction was lost" ++ at)
-          Left _ => expect (got == old || got == new) ("recovered a state that is neither old nor new" ++ at)
+  , crashSweep "with the log kept" (MkOptions 16 4194304 False 50000) False
+  , crashSweep "with a checkpoint after every commit and a pool that spills" (MkOptions 8 1 False 50000) True
   ]
 
 persistenceTests : List Test

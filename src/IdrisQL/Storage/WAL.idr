@@ -195,7 +195,7 @@ scanWal path hostLittle onRecord = do
     | Nothing => pure (MkWalScan False 0 0 0 False 0 0)
   hdr <- alloc WalHeaderSize
   page <- newPage
-  finally (body h hdr page) (closeFile h)
+  finally (body h hdr page) (closeRead h)
   where
     records : File -> Buffer -> Page -> (dbId : Bits64) -> (salt : Int) ->
               (count : Int) -> (maxLsn : Int) -> (maxTxn : Int) -> DB WalScan

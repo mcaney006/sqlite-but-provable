@@ -51,8 +51,9 @@ h = (rotate_left(h, 5) xor word) * 0x9E3779B1     for each word
 checksum = h xor (h >> 15)
 ```
 
-It detects torn and misdirected writes. It is not a CRC and gives no
-guarantee about burst errors.
+It detects a torn write. It is not a CRC and gives no guarantee about burst
+errors. It does not cover the page's own number, so a whole valid page
+written to another page's file passes.
 
 ## Meta page (page 0)
 
@@ -61,14 +62,15 @@ guarantee about burst errors.
 | 24 | 8 | Magic: `IDRISQL` followed by a zero byte |
 | 32 | 4 | Format version, 1 |
 | 36 | 4 | Page size, 4096 |
-| 40 | 8 | Database id, fixed at creation |
+| 40 | 8 | Database id, fixed at creation: nanoseconds since the epoch mixed with the process id |
 | 48 | 4 | Page count: pages 0..count-1 exist |
 | 52 | 4 | First page of the free list, 0 if empty |
 | 56 | 4 | Number of pages on the free list |
 | 60 | 4 | Catalog root page, 1 |
 | 64 | 8 | Id of the last committed transaction |
 | 72 | 8 | Schema cookie, incremented by every schema change |
-| 80 | 8 | Next object id for tables and indexes |
+| 80 | 4 | Next object id for tables and indexes |
+| 84 | 4 | Unused, zero |
 | 88 | 8 | Next LSN |
 
 A build refuses a database whose version is greater than its own, and one
@@ -158,7 +160,7 @@ Index entry value: byte 2 (kind), byte 1 (entry version), u32 object id,
 name, table name, u32 root page, column positions, unique flag,
 constraint-owned flag, i64 distinct-key estimate.
 
-Strings are a u32 byte length and UTF-8 bytes. Lists are a u32 count and the
+Strings are a u32 byte length and UTF-8 bytes. Lists are a u16 count and the
 elements.
 
 ## Row format

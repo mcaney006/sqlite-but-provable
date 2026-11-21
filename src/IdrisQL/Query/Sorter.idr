@@ -131,7 +131,7 @@ sortRows env ks dirs ctx input = do
       files <- readIORef paths
       runs <- traverse openRun files
       let release = do
-            traverse_ (\r => liftIO (closeFile r.handle)) runs
+            traverse_ (\r => liftIO (closeRead r.handle)) runs
             traverse_ (removePath env.st) files
       modifyIORef env.cleanups (release ::)
       heads <- traverse (\r => map (\h => (h, r)) (readRun (ks ++ ctx) r)) runs

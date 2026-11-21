@@ -33,8 +33,10 @@ data Conn : TxState -> Type where
   MkConn : Engine -> Conn s
 
 ||| The result of an operation, together with the connection in the state
-||| the operation left it in. A failure always leaves it idle: if a
-||| transaction was open, it has been rolled back.
+||| the operation left it in. A failure always leaves it idle. If a
+||| transaction was open it has been rolled back, whatever the failure was,
+||| with one exception: `commit` failing with `CommittedThenFailed` means the
+||| transaction is committed.
 public export
 data Outcome : (ok : TxState) -> Type -> Type where
   Ok   : (value : a) -> (1 conn : Conn ok) -> Outcome ok a

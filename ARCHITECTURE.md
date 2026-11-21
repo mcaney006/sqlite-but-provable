@@ -123,9 +123,10 @@ The pager owns transactions. Changed pages stay out of the page files until
 commit, the log holds full page images, and recovery only redoes.
 `docs/TRANSACTIONS.md` describes the protocol and its guarantees.
 
-`src/IdrisQL/Storage/FileIO.idr` is the only module that calls file
-functions. It also counts writes and can fail the Nth one on request, which
-is how the recovery tests inject faults without a foreign function.
+`src/IdrisQL/Storage/FileIO.idr` is the only module that reads or writes
+database files. (The shell reads its script and writes to the console
+itself.) It also counts writes and can fail the Nth one on request, which is
+how the recovery tests inject faults without a foreign function.
 
 ## Where the types do work
 

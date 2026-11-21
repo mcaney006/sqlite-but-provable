@@ -2,8 +2,10 @@ module IdrisQL.Storage.Pager
 
 import Data.IORef
 import Data.List
+import Data.Bits
 import Data.So
 import System
+import System.Clock
 import IdrisQL.Error
 import public IdrisQL.Options
 import IdrisQL.Storage.BufferPool
@@ -141,11 +143,17 @@ checkpoint pg = guarded pg $ do
   resetWal pg.wal (salt + 1)
   modifyIORef pg.checkpointCount (+ 1)
 
+||| Fails once a storage failure has left the pool in an unknown state.
+export
+ensureUsable : Pager -> DB ()
+ensureUsable pg = do
+  bad <- readIORef pg.poisoned
+  when' bad (IOFailure "an earlier storage failure left this connection unusable; reopen the database")
+
 export
 beginTxn : Pager -> DB ()
 beginTxn pg = do
-  bad <- readIORef pg.poisoned
-  when' bad (IOFailure "an earlier storage failure left this connection unusable; reopen the database")
+  ensureUsable pg
   active <- readIORef pg.txnOpen
   when' active (TxError "a transaction is already open")
   modifyIORef pg.txnId (+ 1)
@@ -174,12 +182,18 @@ commitTxn pg = do
         for_ ids $ \pageId => do
           f <- pin pg.pool pageId
           finally (appendPage pg.wal tx pageId (framePage f)) (liftIO (unpin f))
-        _ <- appendCommit pg.wal tx
-        commitFrames pg.pool
+        ignore (appendCommit pg.wal tx)
+      -- The transaction is committed from here on, whatever fails below.
       writeIORef pg.txnOpen False
       modifyIORef pg.commitCount (+ 1)
+      afterCommit (commitFrames pg.pool)
       size <- liftIO (walSize pg.wal)
-      when (size >= pg.opts.checkpointBytes) (checkpoint pg)
+      when (size >= pg.opts.checkpointBytes) (afterCommit (checkpoint pg))
+  where
+    afterCommit : DB () -> DB ()
+    afterCommit act = catchDB act $ \e => do
+      writeIORef pg.poisoned True
+      throw (CommittedThenFailed (show e))
 
 export
 rollbackTxn : Pager -> DB ()
@@ -187,11 +201,8 @@ rollbackTxn pg = do
   active <- readIORef pg.txnOpen
   when' (not active) (TxError "no transaction is open")
   writeIORef pg.txnOpen False
-  bad <- readIORef pg.poisoned
-  -- After a storage failure the spill files cannot be trusted to delete;
-  -- recovery at the next open clears them.
-  if bad then catchDB (rollbackFrames pg.pool) (\_ => pure ())
-         else rollbackFrames pg.pool
+  -- A rollback that fails leaves the pool in an unknown state.
+  guarded pg (rollbackFrames pg.pool)
 
 -- Page allocation. Free pages form a singly linked list through their right
 -- pointers, headed in the meta page.
@@ -273,9 +284,11 @@ createDatabase st dir opts = do
       _ <- makeDir (dir ++ "/p")
       _ <- makeDir (dir ++ "/spill")
       little <- hostLittleEndian
-      now <- liftIO time
+      -- Nanoseconds since the epoch mixed with the process id: two
+      -- databases made by one process cannot share an id.
+      now <- liftIO (clockTime UTC)
       pid <- liftIO getPID
-      let dbId : Bits64 = cast (now * 1000003 + cast pid)
+      let dbId : Bits64 = cast (seconds now * 1000000000 + nanoseconds now) `xor` (cast pid `shiftL` 44)
       pool <- newPool st dir little opts.cachePages
       wal <- newWal st (dir ++ "/wal") little dbId 1
       resetWal wal 1
@@ -310,6 +323,22 @@ openDatabase st dir opts = do
   acquireLock dir opts
   catchDB load (\e => liftIO (removeDirectory (lockPath dir)) >> throw e)
   where
+    foreignLog : DbError
+    foreignLog = Corrupt "the write-ahead log belongs to a different database"
+
+    -- Refuse a log written for another database before replaying it: its
+    -- page images include page 0, so afterwards the ids would agree. A
+    -- page 0 that cannot be read is left for the replay to repair.
+    sameDatabase : Pool -> WalScan -> DB ()
+    sameDatabase pool scan = when scan.present $ do
+      p <- newPage
+      r <- liftIO (runDB (readStorePage pool 0 p))
+      case r of
+        Left _ => pure ()
+        Right () => do
+          id <- liftIO (getBits64 p offDbId)
+          when' (id /= scan.dbId) foreignLog
+
     load : DB Pager
     load = do
       little <- hostLittleEndian
@@ -318,10 +347,10 @@ openDatabase st dir opts = do
       for_ (filter (\n => n /= "." && n /= "..") leftovers) $ \n =>
         removePath st (dir ++ "/spill/" ++ n)
       pool <- newPool st dir little opts.cachePages
-      (info, scan) <- recover pool (dir ++ "/wal") little
+      (info, scan) <- recover pool (dir ++ "/wal") little (sameDatabase pool)
       (dbId, lastTxn, nextLsn) <- readMeta pool
-      when' (scan.present && scan.dbId /= dbId)
-        (Corrupt "the write-ahead log belongs to a different database")
+      -- Reached only when page 0 was unreadable before the replay.
+      when' (scan.present && scan.dbId /= dbId) foreignLog
       wal <- newWal st (dir ++ "/wal") little dbId (max nextLsn (scan.maxLsn + 1))
       resetWal wal (scan.salt + 1)
       pure (MkPager st dir pool wal opts !(newIORef False) !(newIORef (max lastTxn scan.maxTxn))

@@ -121,7 +121,7 @@ what is known not to hold.
 
 ```sh
 make test               # everything below; needs sqlite3 on the PATH
-make test-unit          # 279 tests: lexer and parser, storage, SQL, typed API
+make test-unit          # 282 tests: lexer and parser, storage, SQL, typed API
 make test-typecheck     # 3 programs that must compile, 8 that must not
 make test-differential  # 180 comparisons with the sqlite3 shell
 make test-crash         # 40 rounds of SIGKILL and recovery

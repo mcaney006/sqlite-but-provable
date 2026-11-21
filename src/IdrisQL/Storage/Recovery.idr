@@ -13,14 +13,19 @@ import IdrisQL.Storage.WAL
 ||| transactions, the second writes their page images to the page files in
 ||| log order. Page files never hold uncommitted data, so there is nothing
 ||| to undo. Running it twice gives the same page files.
+|||
+||| `beforeRedo` sees the result of the first pass and can refuse the log
+||| before any page file is written.
 export
-recover : Pool -> (walPath : String) -> (hostLittle : Bool) -> DB (RecoveryInfo, WalScan)
-recover pool walPath hostLittle = do
+recover : Pool -> (walPath : String) -> (hostLittle : Bool) -> (beforeRedo : WalScan -> DB ()) ->
+          DB (RecoveryInfo, WalScan)
+recover pool walPath hostLittle beforeRedo = do
   committed <- newIORef (the (SortedSet Int) empty)
   scan <- scanWal walPath hostLittle $ \r => case r of
     WalCommit tx => modifyIORef committed (insert tx)
     WalPage _ _ _ => pure ()
   txs <- readIORef committed
+  beforeRedo scan
   redone <- newIORef 0
   discarded <- newIORef 0
   _ <- scanWal walPath hostLittle $ \r => case r of

@@ -609,6 +609,22 @@ recoveryTests =
       writeFileFrom st (dir ++ "/wal") buf n
       expectError "foreign log" (openDatabase st dir defaultOptions) isCorrupt
 
+  , dbTest "recovery: another database's log is refused before any of it is replayed" $ do
+      (stA, dirA, pgA) <- fresh "rec-swap-a.idb" defaultOptions
+      mA <- inTransaction pgA (applyOps pgA 1 (workload 82 300 200) empty)
+      closeDatabase pgA
+      (stB, dirB, pgB) <- fresh "rec-swap-b.idb" defaultOptions
+      _ <- inTransaction pgB (applyOps pgB 1 (workload 83 300 200) empty)
+      liftIO (abandonDatabase pgB)
+      -- B's log holds committed images of B's pages, page 0 included.
+      (buf, n) <- rawFile stB (dirB ++ "/wal")
+      writeFileFrom stA (dirA ++ "/wal") buf n
+      expectError "another database's log" (openDatabase stA dirA defaultOptions) isCorrupt
+      removePath stA (dirA ++ "/wal")
+      pgA2 <- openDatabase stA dirA defaultOptions
+      _ <- checkTree pgA2 1 mA "after refusing another database's log"
+      closeDatabase pgA2
+
   , dbTest "recovery: a torn page file is repaired from the log" $ do
       (st, dir, pg) <- fresh "rec-tornpage.idb" (MkOptions 256 4194304 False 50000)
       m <- inTransaction pg (applyOps pg 1 (workload 91 1200 800) empty)

@@ -107,6 +107,10 @@ writeStorePage pool pageId p = do
   liftIO (sealPage pool.hostLittle p)
   writeFileFrom pool.st (storePath pool.dir pageId) (rawBuffer p) PageSize
 
+||| Read a page file into `p` without going through the pool.
+export
+readStorePage : Pool -> (pageId : Int) -> Page -> DB ()
+
 loadFile : Pool -> (what : String) -> (path : String) -> Page -> DB ()
 loadFile pool what path p = do
   Just n <- readFileInto pool.st path (rawBuffer p) PageSize
@@ -114,6 +118,8 @@ loadFile pool what path p = do
   when' (n /= PageSize) (Corrupt (what ++ " holds " ++ show n ++ " bytes"))
   ok <- liftIO (verifyPage pool.hostLittle p)
   when' (not ok) (Corrupt (what ++ " fails its checksum"))
+
+readStorePage pool pageId p = loadFile pool ("page " ++ show pageId) (storePath pool.dir pageId) p
 
 frameAt : Pool -> Int -> DB Frame
 frameAt pool i = do
@@ -270,11 +276,14 @@ export
 txnPageIds : Pool -> IO (List Int)
 txnPageIds pool = map Prelude.toList (readIORef pool.txnPages)
 
+-- Forget the spilled pages, then delete their files. A file that cannot be
+-- deleted is no longer referenced, and the next open empties the directory.
 dropSpillFiles : Pool -> DB ()
 dropSpillFiles pool = do
   sp <- readIORef pool.spilled
-  traverse_ (\pageId => removePath pool.st (spillPath pool.dir pageId)) (Prelude.toList sp)
   writeIORef pool.spilled empty
+  for_ (Prelude.toList sp) $ \pageId =>
+    catchDB (removePath pool.st (spillPath pool.dir pageId)) (\_ => pure ())
 
 ||| Called after the commit record is flushed. Frames of the transaction
 ||| become eligible for page files; spilled pages move to page files now.

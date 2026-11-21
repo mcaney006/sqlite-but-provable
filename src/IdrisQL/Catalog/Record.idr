@@ -59,10 +59,21 @@ takeCell d t = do
     body TBool 6 = pure (Just True)
     body t tag = throw (mismatch t tag)
 
--- Step over a cell without building its value.
+tagFits : SqlType -> Int -> Bool
+tagFits _ 0 = True
+tagFits TInt tag = tag == 1
+tagFits TReal tag = tag == 2
+tagFits TText tag = tag == 3
+tagFits TBlob tag = tag == 4
+tagFits TBool tag = tag == 5 || tag == 6
+
+-- Step over a cell without building its value. The tag is still checked
+-- against the column type, so a damaged row is reported whether or not the
+-- query reads the damaged column.
 skipCell : Decoder -> (t : SqlType) -> DB ()
 skipCell d t = do
   tag <- takeU8 d
+  when' (not (tagFits t tag)) (mismatch t tag)
   case tag of
     0 => pure ()
     1 => ignore (takeBits64 d)

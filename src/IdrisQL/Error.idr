@@ -34,6 +34,9 @@ data DbError
   | ||| The database is held by another process, or by a crashed one.
     Locked String
   | Unsupported String
+  | ||| The commit record reached the operating system, so the transaction is
+    ||| committed, but a later step failed. The connection must be reopened.
+    CommittedThenFailed String
   | ||| Raised by the fault-injecting storage layer in tests.
     InjectedFault String
 
@@ -48,6 +51,8 @@ Show DbError where
   show (TxError s) = "transaction error: " ++ s
   show (Locked s) = "database locked: " ++ s
   show (Unsupported s) = "not supported: " ++ s
+  show (CommittedThenFailed s) =
+    "the transaction is committed, but this connection must be reopened: " ++ s
   show (InjectedFault s) = "injected fault: " ++ s
 
 ||| IO with typed failure. Every engine operation that touches storage runs

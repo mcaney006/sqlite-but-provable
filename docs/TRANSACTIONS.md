@@ -44,13 +44,15 @@ one round.
 | `BEGIN` .. `COMMIT` | One transaction. `END` is a synonym for `COMMIT`. |
 | `ROLLBACK` | Undoes everything since `BEGIN`, including schema changes |
 | `BEGIN` inside a transaction, `COMMIT` or `ROLLBACK` outside one | Error; nothing changes |
-| A statement rejected before it runs (syntax, unknown name, type error) | Error; an open transaction stays open |
+| A statement rejected when it is compiled: a syntax error, or an unknown name or type error in a query, `INSERT`, `UPDATE` or `DELETE` | Error; an open transaction stays open |
 | A query that fails while producing rows | Error; an open transaction stays open |
-| A writing statement that fails while running (constraint violation, overflow, I/O error) | The whole transaction is rolled back, including an explicit one |
+| A writing statement that fails while running: a constraint violation, an overflow, an I/O error, or a schema statement whose names do not check out (`DROP TABLE` of a missing table, `CREATE TABLE` of an existing one) | The whole transaction is rolled back, including an explicit one |
+| Any failure through the typed session API | The transaction is rolled back, and the connection comes back idle |
 | Closing with a transaction open | The transaction is rolled back |
 
-The second-to-last row differs from SQLite, which undoes only the failed
-statement. IdrisQL has no statement-level undo: the log is redo-only and
+The row about writing statements differs from SQLite, which undoes only the
+failed statement. Schema statements are in that row because they check
+their names when they run, not when they are compiled. IdrisQL has no statement-level undo: the log is redo-only and
 there are no savepoints. Rolling back the transaction is the only way to
 guarantee that a half-applied statement leaves nothing behind. The shell
 prints `The open transaction was rolled back.` when this happens.
@@ -95,10 +97,14 @@ move to `spill/` as the pool fills.
 The log is written a page image at a time. A transaction that changes one
 row in each of 50 pages logs 50 pages, about 200 KiB.
 
-If step 1 or 2 fails, the transaction is rolled back. If any write to the
-log or a page file fails, the connection refuses further work until the
-database is reopened, because the pool can no longer be trusted to match the
-disk.
+What a failure means depends on where it happens.
+
+| Failure | Result |
+|---|---|
+| In step 1 or 2 | The transaction is reported as failed and rolled back, and the connection refuses every later statement until the database is reopened. If the commit record did reach the file in spite of the error, the next open will treat the transaction as committed. |
+| In step 3, or in the checkpoint that may follow | The error is `CommittedThenFailed`: the transaction is committed and will be there after reopening. The connection refuses every later statement, because its pool may no longer match the disk. |
+| Writing an evicted page to `spill/` or to its page file during a statement | The statement fails and its transaction is rolled back. The connection stays usable. |
+| During a rollback | The connection refuses every later statement until the database is reopened. |
 
 ## Checkpoint
 
@@ -117,12 +123,18 @@ one, and the page files are already complete.
 
 Every open runs recovery before anything else.
 
-1. Delete everything in `spill/` and `tmp/`.
+1. Delete everything in `spill/`.
 2. Read the log to the first record that is incomplete or fails its
    checksum, collecting the ids of transactions that have a commit record.
-3. Read it again and write each page image that belongs to a committed
+   A read error is reported as an error, not taken for the end of the log.
+3. Compare the log's database id with page 0's. A log written for another
+   database is refused here, before any of it is applied. If page 0 cannot
+   be read, the comparison is made after step 4.
+4. Read the log again and write each page image that belongs to a committed
    transaction to its page file, in log order.
-4. Empty the log.
+5. Empty the log.
+
+`tmp/` is emptied after recovery.
 
 Two passes keep memory use independent of the log's length. Running recovery
 twice gives the same page files, so a crash during recovery is repaired by
@@ -130,7 +142,7 @@ the next open.
 
 A page file that was being written when the process died can be short or
 empty. Its image is in the log (the checkpoint that would discard it had not
-finished), so step 3 replaces it.
+finished), so step 4 replaces it.
 
 The shell reports what recovery did on standard error, for example:
 
@@ -145,7 +157,7 @@ The same figures are available to a program as `recovery db`.
 | Test | What it does | Result recorded on the reference machine |
 |---|---|---|
 | `storage` suite, crash sweeps (`src/Tests/Storage.idr`) | Runs a workload, makes the Nth storage write fail, for every N, with and without writing half of the failing write; abandons the pager without cleanup; reopens and compares with a model. Repeated with a checkpoint after every commit and with a pool small enough to spill. | All pass |
-| `sql` suite, crash sweep (`src/Tests/Sql.idr`) | The same at SQL level over a transaction that updates, deletes, inserts and creates a table, with two indexes: after recovery the database equals the state before or the state after, never a mixture, and the integrity check passes. | Passes for every write of the transaction |
+| `sql` suite, crash sweeps (`src/Tests/Sql.idr`) | The same at SQL level over a transaction that updates, deletes, inserts and creates a table, with two indexes. A transaction reported as committed is present after reopening; one reported as failed is absent; one that failed with `CommittedThenFailed` is present, and its connection refuses the next statement. Run with the log kept, and with a checkpoint after every commit and an 8-page pool. | Both pass for every write of the transaction |
 | `tests/crash/run.sh` | Starts the real program on a workload of 20-row transactions, sends SIGKILL after 30 to 480 ms, reopens, and checks integrity, that every batch has exactly 20 rows, that batches are 1..m without a gap, and that m is at least the last batch the process reported. 40 rounds on one database, with a 64 KiB checkpoint threshold. | Two runs: 40 kills each; 33 and 36 recoveries replayed the log; 79,480 and 59,200 rows survived; 0 failures in both. The counts vary with timing. |
 
 In-process fault injection and SIGKILL both leave the operating system

@@ -141,12 +141,12 @@ check the range against the buffer first.
 |---|---|---|
 | A page read from disk matches its checksum and is 4096 bytes | `BufferPool.loadFile` | `Corrupt` |
 | A log record matches its checksum | `WAL.scanWal` | Replay stops there |
-| The log belongs to this database | `Pager.openDatabase` | `Corrupt` |
+| The log belongs to this database, checked before any of it is replayed | `Pager.openDatabase` | `Corrupt` |
 | Format version and page size are ones this build reads | `Pager.readMeta` | `Unsupported` |
 | A computed page offset is in range | `Format.checkRange`, via `Page.readU16` and others | `Corrupt` |
 | Slot offsets and key ranges inside the tree search loop are in range | `Page.searchSlots`, plain comparisons before each raw read | `Corrupt` |
 | A page has the type its position in the tree requires | `BPlusTree` | `Corrupt` |
-| A stored row's tags match the table's column types | `Record.decodeRow` | `Corrupt` |
+| A stored row's tags match the table's column types, also in columns the query does not read | `Record.decodeRow` | `Corrupt` |
 | Tree descent ends | Depth limit of 64 | `Corrupt` |
 | Overflow and free-list walks end | Bounded by the recorded length and count | `Corrupt` |
 | Keys strictly ascending and inside the range set by the ancestors' separators; all leaves at one depth; the leaf chain visits exactly the leaves, in order; no page reachable twice; free-space accounting and overflow lengths correct | `BPlusTree.validate`, run by `.check` | Reported |
@@ -154,7 +154,8 @@ check the range against the buffer first.
 | NOT NULL, UNIQUE, PRIMARY KEY, CHECK | `Engine`, before a row is written | `ConstraintViolation` |
 | Parameter values have the inferred types | `Statement.checkParams` | `RuntimeError` |
 | A query's rows are read only while its statement is the latest on the connection | `Engine.current` | `RuntimeError` |
-| No transaction starts after a failed write to the log or a page file | `Pager.guarded`, `Pager.beginTxn` | `IOFailure` until reopen |
+| No statement runs after a failure in commit, checkpoint or rollback | `Pager.guarded`, `Pager.ensureUsable` | `IOFailure` until reopen |
+| A failure after the commit point is not reported as a rollback | `Pager.commitTxn` | `CommittedThenFailed` |
 
 ## Tested
 
@@ -163,10 +164,10 @@ Figures are from the reference machine in `docs/PLATFORM_CONSTRAINTS.md`.
 | Property | Test | Size |
 |---|---|---|
 | Lexer and parser accept the supported grammar, reject the rest with a position | `sql-frontend` suite | 192 tests |
-| Pages, codecs, pager, free list, B+ tree, recovery | `storage` suite | 43 tests, including the next two rows |
+| Pages, codecs, pager, free list, B+ tree, recovery | `storage` suite | 44 tests, including the next two rows |
 | B+ tree agrees with a sorted-map model under random inserts, overwrites and deletes, and validates afterwards | `storage` suite, seeds 20261121 and 7 | 6,000 operations per seed |
 | Recovery leaves exactly the committed transactions when any single write fails or is torn | `storage` suite crash sweeps | 5 configurations, every write of the transaction in each |
-| SQL semantics: three-valued logic, constraints, joins, aggregates, ordering, parameters, transactions, DDL rollback | `sql` suite | 43 tests |
+| SQL semantics: three-valued logic, constraints, joins, aggregates, ordering, parameters, transactions, DDL rollback | `sql` suite | 45 tests |
 | Queries return the same rows with and without indexes, and after `ANALYZE` | `sql` suite | 14 queries, 3 indexes |
 | Random statements agree with a model, in autocommit and inside transactions | `sql` suite, seed 20261121 | 1,100 statements |
 | EXPLAIN prints the plan the planner chose | `sql` suite | Exact plan text for 14 statements |
@@ -184,8 +185,8 @@ Figures are from the reference machine in `docs/PLATFORM_CONSTRAINTS.md`.
 | After `fflush` returns, the operating system holds the bytes and returns them to later reads, also after the process dies | Commit durability |
 | `createDir` is atomic and fails when the directory exists | The lock |
 | No other program writes into the database directory | Page files have no protection beyond a checksum |
-| A torn or misdirected write changes the page's 32-bit hash | The checksum is not a CRC and is not designed against adversaries |
-| Wall clock time and process id together differ between two databases created on one machine | The database id that pairs a log with its database |
+| A torn write changes the page's 32-bit hash | The checksum is not a CRC and is not designed against adversaries |
+| Two databases never get the same id: a nanosecond clock reading mixed with the process id | The id is what pairs a log with its database |
 
 ## Known limitations
 
@@ -198,4 +199,5 @@ Figures are from the reference machine in `docs/PLATFORM_CONSTRAINTS.md`.
 | A scan follows leaf links without a bound | A corrupted leaf chain that forms a cycle makes a scan loop. `.check` detects the cycle. |
 | Unused linear pattern variables are accepted by the compiler | Described under "Transaction state of a typed session" |
 | Power loss | Outside what the platform allows; see `docs/TRANSACTIONS.md` |
+| A misdirected write is not detected | The checksum does not cover the page number, so a whole valid page in the wrong file passes |
 | A non-root leaf can stay empty after deletes | Counted by the validator, not treated as damage |

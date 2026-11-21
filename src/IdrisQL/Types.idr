@@ -136,15 +136,6 @@ fromValue TBool (VBool x) = Just (Just x)
 fromValue _ _ = Nothing
 
 export
-valueType : Value -> Maybe SqlType
-valueType VNull = Nothing
-valueType (VInt _) = Just TInt
-valueType (VReal _) = Just TReal
-valueType (VText _) = Just TText
-valueType (VBlob _) = Just TBlob
-valueType (VBool _) = Just TBool
-
-export
 compareVal : (t : SqlType) -> Val t -> Val t -> Ordering
 compareVal TInt x y = compare x y
 compareVal TReal x y = compare x y

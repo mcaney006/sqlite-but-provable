@@ -52,8 +52,11 @@ record Engine where
   schemaChanged : IORef Bool
   ||| Counts schema changes and rollbacks; cached plans are tied to it.
   generation : IORef Int
-  ||| Largest rowid handed out per table id, while it is known.
+  ||| Largest rowid in each table, by table id, while it is known.
   lastRowids : IORef (SortedMap Int Int64)
+  ||| Counts statements run. A query's rows can be read only while its
+  ||| statement is the latest.
+  statementSeq : IORef Int
   sorter : SortEnv
 
 public export
@@ -263,7 +266,10 @@ updateRow eng tbl assigns checks indexes params rowid = do
         when' (isJust owner && owner /= Just rowid) (uniqueViolation tbl idx.columns)
       _ <- delete eng.pager idx.root was
       ignore (put eng.pager idx.root now none)
-  when (newRowid /= rowid) (ignore (delete eng.pager tbl.root oldKey))
+  when (newRowid /= rowid) $ do
+    _ <- delete eng.pager tbl.root oldKey
+    -- The row that moved may have held the largest rowid.
+    modifyIORef eng.lastRowids (delete tbl.id)
   _ <- put eng.pager tbl.root !(rowidKey newRowid) !(encodeRow (tableCtx tbl) new)
   pure True
 
@@ -276,6 +282,8 @@ deleteRow eng tbl indexes rowid = do
     e <- indexEntry tbl idx row
     found <- delete eng.pager idx.root !(entryKey e rowid)
     when' (not found) (Corrupt ("index " ++ idx.name ++ " has no entry for rowid " ++ show rowid))
+  known <- readIORef eng.lastRowids
+  when (lookup tbl.id known == Just rowid) (modifyIORef eng.lastRowids (delete tbl.id))
   delete eng.pager tbl.root key
 
 -- The rowids a statement applies to, collected before anything is written
@@ -519,14 +527,25 @@ direct eng _ = throw (Unsupported "this statement cannot be executed")
 
 ||| Run a checked statement with the given parameter values.
 export
+-- A row source that refuses to be read once a later statement has run: the
+-- pages under its cursors may have changed, and its sort runs are gone.
+current : Engine -> (mine : Int) -> DB (Maybe a) -> DB (Maybe a)
+current eng mine source = do
+  now <- readIORef eng.statementSeq
+  when' (now /= mine)
+    (RuntimeError "this result was ended by a later statement on the same connection")
+  source
+
 runCompiled : Engine -> Compiled -> (params : List Value) -> DB Result
 runCompiled eng c params = do
   liftE (checkParams (compiledParams c) params)
+  modifyIORef eng.statementSeq (+ 1)
+  mine <- readIORef eng.statementSeq
   releaseSorts eng.sorter
   case c of
     CSelect q plan => do
       rows <- run (MkExec eng.pager params eng.sorter) q.shape plan
-      pure (Rows q.names q.shape (map (map (rowValues q.shape)) rows))
+      pure (Rows q.names q.shape (current eng mine (map (map (rowValues q.shape)) rows)))
     CInsert tbl rows checks indexes => writing eng $ do
       for_ rows $ \exprs => do
         row <- liftE (evalRow params [] exprs)
@@ -618,7 +637,7 @@ openWith st path opts = do
       schema <- loadSchema pg
       sorter <- liftIO (newSortEnv st tmp opts.sortMemoryRows)
       pure (MkEngine pg !(newIORef schema) !(newIORef False) !(newIORef False)
-              !(newIORef 0) !(newIORef empty) sorter)
+              !(newIORef 0) !(newIORef empty) !(newIORef 0) sorter)
 
 ||| Open the database directory at `path`, creating it if it does not exist.
 export

@@ -52,20 +52,7 @@ notANode pageId t = Corrupt ("page " ++ show pageId ++ " of type " ++ show t ++ 
 ||| Index of the first slot whose key is >= `key`, and whether it is equal.
 export
 searchPage : Page -> (key : Bytes) -> DB (Int, Bool)
-searchPage p key = do
-  n <- liftIO (slotCount p)
-  go 0 n
-  where
-    go : Int -> Int -> DB (Int, Bool)
-    go lo hi =
-      if lo >= hi then pure (lo, False)
-      else do
-        let mid = (lo + hi) `div` 2
-        o <- compareSlotKey p mid key
-        case o of
-          LT => go (mid + 1) hi
-          EQ => pure (mid, True)
-          GT => go lo mid
+searchPage = searchSlots
 
 ||| Child `j` of an internal page, where `j` equal to the slot count means
 ||| the rightmost child.

@@ -70,7 +70,3 @@ bumpSchemaCookie : Pager -> DB ()
 bumpSchemaCookie pg = do
   c <- metaBits64 pg offSchemaCookie
   setMetaBits64 pg offSchemaCookie (c + 1)
-
-export
-schemaCookie : Pager -> DB Bits64
-schemaCookie pg = metaBits64 pg offSchemaCookie

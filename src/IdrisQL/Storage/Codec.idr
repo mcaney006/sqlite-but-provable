@@ -280,10 +280,6 @@ reserve bd n = do
       pure (bigger, len)
 
 export
-builderLength : Builder -> IO Int
-builderLength bd = readIORef bd.lenRef
-
-export
 putU8 : Builder -> Int -> DB ()
 putU8 bd v = do
   (buf, o) <- reserve bd 1

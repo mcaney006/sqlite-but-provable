@@ -46,14 +46,6 @@ pagerPool : Pager -> Pool
 pagerPool pg = pg.pool
 
 export
-pagerStorage : Pager -> Storage
-pagerStorage pg = pg.st
-
-export
-pagerDir : Pager -> String
-pagerDir pg = pg.dir
-
-export
 pagerRecovery : Pager -> RecoveryInfo
 pagerRecovery pg = pg.recovery
 
@@ -100,19 +92,19 @@ setMetaBits64 pg off v = do
 
 writeMagic : Page -> IO ()
 writeMagic p = do
-  setU8 p 24 73
-  setU8 p 25 68
-  setU8 p 26 82
-  setU8 p 27 73
-  setU8 p 28 83
-  setU8 p 29 81
-  setU8 p 30 76
-  setU8 p 31 0
+  setU8 p offMagic 73
+  setU8 p (offMagic + 1) 68
+  setU8 p (offMagic + 2) 82
+  setU8 p (offMagic + 3) 73
+  setU8 p (offMagic + 4) 83
+  setU8 p (offMagic + 5) 81
+  setU8 p (offMagic + 6) 76
+  setU8 p (offMagic + 7) 0
 
 magicOk : Page -> IO Bool
 magicOk p = do
-  bs <- sequence [getU8 p 24, getU8 p 25, getU8 p 26, getU8 p 27,
-                  getU8 p 28, getU8 p 29, getU8 p 30, getU8 p 31]
+  bs <- sequence [getU8 p offMagic, getU8 p (offMagic + 1), getU8 p (offMagic + 2), getU8 p (offMagic + 3),
+                  getU8 p (offMagic + 4), getU8 p (offMagic + 5), getU8 p (offMagic + 6), getU8 p (offMagic + 7)]
   pure (bs == magicBytes)
 
 -- Validate the header page and return (database id, last transaction, next LSN).

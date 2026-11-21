@@ -6,7 +6,7 @@ public export
 record Options where
   constructor MkOptions
   ||| Buffer pool capacity in 4 KiB pages. This bounds the memory used for
-  ||| database pages.
+  ||| database pages. The default is 2048 pages, 8 MiB.
   cachePages : Int
   ||| A commit that leaves the log at least this many bytes long triggers a
   ||| checkpoint.
@@ -19,7 +19,7 @@ record Options where
 
 public export
 defaultOptions : Options
-defaultOptions = MkOptions 256 4194304 False 50000
+defaultOptions = MkOptions 2048 4194304 False 50000
 
 ||| What a completed log flush guarantees. This build has one level because
 ||| base exposes `fflush` and nothing stronger.

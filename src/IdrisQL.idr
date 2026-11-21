@@ -34,8 +34,8 @@ data Database : Type where
   MkDatabase : Engine -> Database
 
 ||| The rows of a query. `next` yields one row per call and `Nothing` at
-||| the end. The result is invalidated by the next statement run on the
-||| same database.
+||| the end. Reading it after another statement has run on the same
+||| database fails.
 public export
 record ResultSet where
   constructor MkResultSet

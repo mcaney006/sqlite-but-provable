@@ -146,10 +146,6 @@ setRightPointer : Page -> Int -> IO ()
 setRightPointer p v = setU32 p offRight v
 
 export
-pageLsn : Page -> IO Bits64
-pageLsn p = getBits64 p offLsn
-
-export
 setPageLsn : Page -> Bits64 -> IO ()
 setPageLsn p v = setBits64 p offLsn v
 
@@ -350,14 +346,43 @@ keyRange p slot = do
     else if t == ptInternal then pure (off + 6, klen)
     else throw (Corrupt ("page type " ++ show t ++ " has no keys"))
 
-||| Order of the key stored in `slot` relative to `key`.
+data Found = At Int Bool | BadSlot Int
+
+||| Index of the first slot whose key is >= `key`, and whether that key is
+||| equal: a binary search over the slot directory. The descent of every
+||| tree operation runs through here, so the loop reads raw bytes; each
+||| offset is compared with the page bounds before it is used.
 export
-compareSlotKey : Page -> (slot : Int) -> (key : Bytes) -> DB Ordering
-compareSlotKey p slot key = do
-  (koff, klen) <- keyRange p slot
-  case checkRange koff klen of
-    Just _ => liftIO (compareRaw p.buf koff klen key)
-    Nothing => throw (outOfPage koff klen)
+searchSlots : Page -> (key : Bytes) -> DB (Int, Bool)
+searchSlots p key = do
+  t <- liftIO (pageType p)
+  n <- liftIO (slotCount p)
+  when' (t /= ptLeaf && t /= ptInternal) (Corrupt ("page type " ++ show t ++ " has no keys"))
+  when' (slotPos n > PageSize) (Corrupt ("slot directory of " ++ show n ++ " slots runs past the page end"))
+  r <- liftIO (go (if t == ptLeaf then 5 else 6) (slotPos n) 0 n)
+  case r of
+    At i exact => pure (i, exact)
+    BadSlot i => throw (Corrupt ("slot " ++ show i ++ " does not point at a cell inside the page"))
+  where
+    -- `keyAt` is the offset of the key within a cell; `cells` is where the
+    -- cell area may begin. Slots lo..hi-1 lie inside the directory, which
+    -- was checked to lie inside the page.
+    go : (keyAt : Int) -> (cells : Int) -> (lo : Int) -> (hi : Int) -> IO Found
+    go keyAt cells lo hi =
+      if lo >= hi then pure (At lo False)
+      else do
+        let mid = (lo + hi) `div` 2
+        off <- rdU16 p.buf (slotPos mid)
+        if off < cells || off + keyAt > PageSize then pure (BadSlot mid)
+          else do
+            klen <- rdU16 p.buf off
+            if off + keyAt + klen > PageSize then pure (BadSlot mid)
+              else do
+                o <- compareRaw p.buf (off + keyAt) klen key
+                case o of
+                  LT => go keyAt cells (mid + 1) hi
+                  EQ => pure (At mid True)
+                  GT => go keyAt cells lo mid
 
 export
 slotKey : Page -> (slot : Int) -> DB Bytes

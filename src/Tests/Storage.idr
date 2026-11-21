@@ -523,7 +523,7 @@ crashSweep name opts torn = dbTest ("recovery: " ++ name) $ do
       Right _ => expect (got == expected after) ("a transaction that reported commit was lost" ++ where_)
       Left _ => expect (got == expected base || got == expected after)
                   ("recovered state is neither the old nor the new one" ++ where_)
-    free <- freeListPages pg2
+    _ <- freeListPages pg2
     closeDatabase pg2
 
 rawFile : Storage -> String -> DB (Buffer, Int)

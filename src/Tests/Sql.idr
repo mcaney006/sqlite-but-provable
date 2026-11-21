@@ -64,10 +64,13 @@ isTx _ = False
 rejects : Engine -> String -> (DbError -> Bool) -> DB ()
 rejects eng sql judge = expectError sql (rowsOf eng sql) judge
 
+-- Every structure on disk is sound and no page was left pinned.
 checked : Engine -> DB ()
 checked eng = do
   problems <- integrityCheck eng
   expect (isNil problems) ("integrity check: " ++ show problems)
+  pinned <- pinnedFrames (pagerPool (enginePager eng))
+  expect (pinned == 0) (show pinned ++ " pages are still pinned")
 
 ||| A 32-page pool and 200-row sort runs, so ordinary tests exercise
 ||| eviction and the external sort.
@@ -266,6 +269,19 @@ constraintTests =
       exec eng "CREATE TABLE plain (v TEXT)"
       exec eng "INSERT INTO plain VALUES ('x'), ('y')"
       expectRows eng "SELECT COUNT(*) FROM plain" ["2"]
+      -- The next rowid is one more than the largest present, also after the
+      -- largest row is deleted or renumbered.
+      exec eng "DELETE FROM r WHERE id = 12"
+      exec eng "INSERT INTO r (v) VALUES ('g')"
+      expectRows eng "SELECT id FROM r WHERE v = 'g'" ["12"]
+      exec eng "UPDATE r SET id = 5 WHERE id = 12"
+      exec eng "INSERT INTO r (v) VALUES ('h')"
+      expectRows eng "SELECT id FROM r WHERE v = 'h'" ["12"]
+      exec eng "BEGIN"
+      exec eng "INSERT INTO r (v) VALUES ('i')"
+      exec eng "ROLLBACK"
+      exec eng "INSERT INTO r (v) VALUES ('j')"
+      expectRows eng "SELECT id FROM r WHERE v = 'j'" ["13"]
 
   , sqlTest "foreign keys are recorded and shown, not enforced" $ \eng => do
       exec eng "CREATE TABLE parent (id INTEGER PRIMARY KEY)"
@@ -565,6 +581,16 @@ paramTests =
       got <- drain source []
       expect (got == ["a"]) ("prepared query returned " ++ show got)
 
+  , sqlTest "a result cannot be read after a later statement has run" $ \eng => do
+      execAll eng people
+      Rows _ _ source <- execute eng "SELECT name FROM person ORDER BY id" []
+        | _ => failWith "the query returned no row source"
+      first <- source
+      expect (first == Just [VText "Ada"]) ("first row: " ++ show first)
+      exec eng "UPDATE person SET name = 'changed' WHERE id = 2"
+      expectError "reading a result ended by an UPDATE" source isRuntime
+      expectRows eng "SELECT name FROM person WHERE id = 2" ["changed"]
+
   , sqlTest "a prepared statement follows schema changes" $ \eng => do
       exec eng "CREATE TABLE q (id INTEGER PRIMARY KEY, k INTEGER)"
       exec eng "INSERT INTO q VALUES (1, 5), (2, 5), (3, 6)"
@@ -798,8 +824,14 @@ apiTests =
       expect (rs.columns == ["name", "price"]) ("columns: " ++ show rs.columns)
       rows <- fetchAll rs
       expect (rows == [[VText "kettle", VReal 19.5], [VText "cup", VNull]]) ("rows: " ++ show rows)
+      byName <- IdrisQL.prepare db "SELECT price FROM item WHERE name = ?"
+      found <- runQuery byName [VText "kettle"]
+      seen <- forRows found (\row => expect (row == [VReal 19.5]) ("row: " ++ show row))
+      expect (seen == 1) ("prepared query returned " ++ show seen ++ " rows")
       names <- liftIO (map (map (.name)) (tables db))
       expect (names == ["item"]) ("tables: " ++ show names)
+      expect (show (durability db) == "flushed to the operating system (no fsync)") "unexpected durability level"
+      expect (not (recovery db).walFound || (recovery db).pagesRedone == 0) "a new database replayed a log"
       problems <- IdrisQL.integrityCheck db
       expect (isNil problems) ("integrity: " ++ show problems)
       IdrisQL.closeDatabase db

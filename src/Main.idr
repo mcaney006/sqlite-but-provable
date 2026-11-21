@@ -20,7 +20,7 @@ usage = """
     --execute SQL       run the statements in SQL and exit
     --file PATH         run the statements in a file and exit
     --mode list|table   output format (default: table on a terminal, list otherwise)
-    --cache PAGES       buffer pool size in 4 KiB pages (default 256)
+    --cache PAGES       buffer pool size in 4 KiB pages (default 2048)
     --checkpoint BYTES  log size that triggers a checkpoint (default 4194304)
     --break-lock        take over a lock left by a dead process
     --help              this text

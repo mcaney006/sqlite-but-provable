@@ -42,7 +42,7 @@ Show DbError where
   show (IOFailure s) = "I/O error: " ++ s
   show (Corrupt s) = "corrupt database: " ++ s
   show (SyntaxError p s) = "syntax error at " ++ show p ++ ": " ++ s
-  show (SemanticError s) = "error: " ++ s
+  show (SemanticError s) = "semantic error: " ++ s
   show (ConstraintViolation s) = "constraint violation: " ++ s
   show (RuntimeError s) = "runtime error: " ++ s
   show (TxError s) = "transaction error: " ++ s

@@ -1,7 +1,6 @@
 package idrisql
 version = 0.1.0
 brief = "An embedded SQL database engine written in Idris 2"
-license = "MIT"
 langversion >= 0.8.0
 
 depends = base, linear

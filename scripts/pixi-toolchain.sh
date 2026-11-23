@@ -27,7 +27,10 @@ if ! "$tool/bin/scheme" --version >/dev/null 2>&1; then
   curl -fsSL "https://github.com/cisco/ChezScheme/releases/download/v$chez_version/csv$chez_version.tar.gz" -o chez.tar.gz
   tar xzf chez.tar.gz
   cd "csv$chez_version"
-  ./configure --installprefix="$tool" --threads --disable-x11 --disable-curses >configure.log 2>&1 || { tail -40 configure.log; exit 1; }
+  # Without iconv: the conda environment's iconv.h renames the functions to
+  # libiconv's, which Chez's link line on Linux does not include, and Idris
+  # uses Chez's own UTF-8 codec.
+  ./configure --installprefix="$tool" --threads --disable-x11 --disable-curses --disable-iconv >configure.log 2>&1 || { tail -40 configure.log; exit 1; }
   make -j"$jobs" >build.log 2>&1 || { tail -40 build.log; exit 1; }
   make install >install.log 2>&1 || { tail -40 install.log; exit 1; }
   cd "$work"

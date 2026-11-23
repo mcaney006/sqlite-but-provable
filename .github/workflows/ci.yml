@@ -48,13 +48,20 @@ jobs:
 
       # The version label is the version in idrisql.ipkg. A v* tag must
       # agree with it: a release that reports another version is a mistake.
+      # idrisql.ipkg holds numbers only, so a pre-release tag such as
+      # v0.3.0-rc.1 agrees with version 0.3.0.
       - name: Version
         id: version
         run: |
           version="$(sed -n 's/^version = //p' idrisql.ipkg)"
-          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match version $version in idrisql.ipkg"
-            exit 1
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            case "$GITHUB_REF_NAME" in
+              "v$version" | "v$version"-*) ;;
+              *)
+                echo "::error::tag $GITHUB_REF_NAME does not match version $version in idrisql.ipkg"
+                exit 1
+                ;;
+            esac
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 

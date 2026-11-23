@@ -228,7 +228,7 @@ curl -s -X POST -H 'Authorization: Bearer change-me' \
 | Contents | Chez Scheme, the compiled program, its support library, two shell scripts. The compiling and the running stage share one Chez Scheme layer. |
 | Size | 26 MB uncompressed on `linux/arm64` |
 | User | `idrisql`, uid and gid 10001 |
-| Labels | `org.opencontainers.image.version` is the version in `idrisql.ipkg`, the one `idrisql --version` prints. `org.opencontainers.image.revision` is the commit the image was built from. The `0.2.0` image and the images of earlier commits have neither. |
+| Labels | `org.opencontainers.image.version` is the version in `idrisql.ipkg`, the one `idrisql --version` prints; a pre-release tag such as `v0.3.0-rc.1` therefore carries `0.3.0`. `org.opencontainers.image.revision` is the commit the image was built from. The `0.2.0` image and the images of earlier commits have neither. |
 | Volume | `/data` |
 | Writes outside `/data` | None. It runs with `--read-only` and `--cap-drop ALL`; `tests/container/run.sh` starts it that way. |
 | Health check | `GET /health` every 10 seconds |

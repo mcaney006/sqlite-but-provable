@@ -5,3 +5,6 @@ build-*/
 *.idb/
 /tmp/
 .DS_Store
+.pixi/
+.terraform/
+.terraform.lock.hcl

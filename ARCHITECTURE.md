@@ -1,8 +1,10 @@
 # Architecture
 
-IdrisQL is one Idris 2 package of 34 library modules and a shell, about
-9,900 lines, with no dependency beyond the compiler's `base` and `linear`
-packages. A statement passes through the layers below from top to bottom.
+IdrisQL is one Idris 2 package of 36 library modules and a shell, about
+10,500 lines. The engine depends on the compiler's `base` and `linear`
+packages and nothing else; the HTTP server adds `network`, which also ships
+with the compiler. A statement passes through the layers below from top to
+bottom.
 
 ```
  SQL text
@@ -44,10 +46,13 @@ packages. A statement passes through the layers below from top to bottom.
  Pages and file access                       src/IdrisQL/Storage/{Page,Format,Codec,FileIO}.idr
 ```
 
-Three entry points sit on top of the engine: the shell
+Four entry points sit on top of the engine: the shell
 (`src/Main.idr`, `src/IdrisQL/CLI/Shell.idr`), the library API
-(`src/IdrisQL.idr`) and the typed session API
-(`src/IdrisQL/Transaction/State.idr`).
+(`src/IdrisQL.idr`), the typed session API
+(`src/IdrisQL/Transaction/State.idr`) and the HTTP server
+(`src/IdrisQL/Server/{Http,Serve}.idr`, described in `docs/SERVER.md`).
+The server holds the engine's one connection and runs each request's
+statements through the same `execute` the shell uses.
 
 ## Front end
 
@@ -152,3 +157,4 @@ only tested.
 | Sort-based grouping, nested-loop joins | Fewer operators to verify and test | Slow joins and aggregates on large inputs |
 | Static typing | It is what makes the typed IR possible | Stricter than SQLite; see `docs/SQL_COMPATIBILITY.md` |
 | Single connection | No lock manager | No concurrency |
+| Serial HTTP server, one connection per request | The engine has one connection, and the socket library has neither timeouts nor non-blocking I/O | One slow client holds up every other |

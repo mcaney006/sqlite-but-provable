@@ -1,8 +1,8 @@
 IDRIS2 ?= idris2
 SRC := $(shell find src -name '*.idr')
 
-.PHONY: all build test test-unit test-typecheck test-differential test-crash \
-        check-rules demo bench microbench clean
+.PHONY: all build dev test test-unit test-typecheck test-differential test-crash \
+        test-server test-container check-rules demo bench microbench docker docker-test clean
 
 all: build
 
@@ -11,14 +11,22 @@ build: build/exec/idrisql
 build/exec/idrisql: idrisql.ipkg $(SRC)
 	$(IDRIS2) --build idrisql.ipkg
 
+# For the edit-and-run loop: Chez code is generated per module, so a
+# rebuild compiles only the modules that changed. The result is
+# build-inc/exec/idrisql. Tests, benchmarks and the container image use the
+# whole-program build above.
+dev:
+	IDRIS2_INC_CGS=chez $(IDRIS2) --build-dir build-inc --build idrisql.ipkg
+
 build/exec/idrisql-tests: build/exec/idrisql $(SRC)
 	$(IDRIS2) -p linear --source-dir src -o idrisql-tests src/Tests/Main.idr
 
 build/exec/idrisql-microbench: build/exec/idrisql $(SRC)
 	$(IDRIS2) -p linear --source-dir src -o idrisql-microbench src/Bench/Micro.idr
 
-# Every suite. test-differential needs sqlite3 on the PATH.
-test: check-rules test-unit test-typecheck test-differential test-crash
+# Every suite. test-differential needs sqlite3 on the PATH and test-server
+# needs curl.
+test: check-rules test-unit test-typecheck test-differential test-crash test-server
 
 check-rules:
 	scripts/check-rules.sh
@@ -35,6 +43,9 @@ test-differential: build/exec/idrisql
 test-crash: build/exec/idrisql
 	tests/crash/run.sh
 
+test-server: build/exec/idrisql
+	tests/server/run.sh
+
 demo: build/exec/idrisql
 	rm -rf build/demo.idb
 	./build/exec/idrisql build/demo.idb --file examples/demo.sql
@@ -47,5 +58,21 @@ microbench: build/exec/idrisql-microbench
 	rm -rf build/microbench.idb
 	./build/exec/idrisql-microbench
 
+# The container image, and the same image built only after the test stage
+# has passed inside Alpine.
+DOCKER ?= docker
+IMAGE ?= idrisql:dev
+
+docker:
+	$(DOCKER) build --target runtime -t $(IMAGE) .
+
+docker-test:
+	$(DOCKER) build --target test -t $(IMAGE)-test .
+
+# Runs the image as deploy/aws does and checks start, stop, restart and a
+# stale lock.
+test-container: docker
+	DOCKER=$(DOCKER) tests/container/run.sh $(IMAGE)
+
 clean:
-	rm -rf build
+	rm -rf build build-inc

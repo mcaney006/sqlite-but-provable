@@ -1,0 +1,68 @@
+# Build, test and run IdrisQL with pixi (https://pixi.sh):
+#
+#   pixi run build     compile the engine
+#   pixi run dev       the same, incrementally, into build-inc/
+#   pixi run test      every test suite
+#   pixi run shell     the interactive shell on ./main.idb
+#   pixi run serve     the HTTP server on 127.0.0.1:5480
+#
+# conda-forge has no Idris 2 or Chez Scheme package, so the first run
+# builds both from source (`pixi run toolchain`) into the user's cache
+# directory; scripts/pixi-activate.sh says where and why. pixi supplies
+# the C compiler, make, GMP, curl and sqlite3 they and the tests need.
+# Windows is not listed: use the container image there, or WSL.
+
+[workspace]
+name = "idrisql"
+description = "An embedded SQL database engine written in Idris 2"
+channels = ["conda-forge"]
+platforms = ["linux-64", "linux-aarch64", "osx-arm64", "osx-64"]
+
+[dependencies]
+make = ">=4.3"
+c-compiler = ">=1.7"
+gmp = ">=6.3"
+curl = ">=8"
+sqlite = ">=3.45"
+tar = ">=1.34"
+
+[target.linux.dependencies]
+libuuid = ">=2.38"
+
+[activation]
+scripts = ["scripts/pixi-activate.sh"]
+
+[tasks.toolchain]
+cmd = "sh scripts/pixi-toolchain.sh"
+
+[tasks.build]
+cmd = "make build"
+depends-on = ["toolchain"]
+
+[tasks.dev]
+cmd = "make dev"
+depends-on = ["toolchain"]
+
+[tasks.test]
+cmd = "make test"
+depends-on = ["toolchain"]
+
+[tasks.test-unit]
+cmd = "make test-unit"
+depends-on = ["toolchain"]
+
+[tasks.demo]
+cmd = "make demo"
+depends-on = ["toolchain"]
+
+[tasks.bench]
+cmd = "make bench"
+depends-on = ["toolchain"]
+
+[tasks.shell]
+cmd = "./build/exec/idrisql main.idb"
+depends-on = ["build"]
+
+[tasks.serve]
+cmd = "./build/exec/idrisql main.idb --serve 5480 --host 127.0.0.1"
+depends-on = ["build"]

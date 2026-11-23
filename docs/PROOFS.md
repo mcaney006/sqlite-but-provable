@@ -17,7 +17,7 @@ The project uses no `believe_me`, no `assert_total`, no `assert_smaller`, no
 
 ## Machine-checked
 
-### Totality of 11 modules
+### Totality of 12 modules
 
 These modules begin with `%default total`. Every function in them is
 checked to cover all inputs and to terminate.
@@ -31,8 +31,9 @@ checked to cover all inputs and to terminate.
 | `IdrisQL.Index.Node` | The cut functions used by splits and merges end |
 | `IdrisQL.Storage.Format` | Range checks end |
 | `IdrisQL.Types`, `Error`, `Options` | Value comparison and rendering end |
+| `IdrisQL.Server.Http` | Parsing any bytes as an HTTP request header ends, with a request or a rejection; so do UTF-8 validation and JSON rendering |
 
-The other 23 modules are checked for coverage only (Idris's default): every
+The other 24 modules are checked for coverage only (Idris's default): every
 case is handled, but termination is not proved. They contain the loops over
 disk structures and the recursive-descent parser. See "Runtime-validated"
 for the bounds on those loops.
@@ -176,6 +177,9 @@ Figures are from the reference machine in `docs/PLATFORM_CONSTRAINTS.md`.
 | Results equal SQLite's at 200,000 rows with a pool smaller than the data | `bench/run.sh` | 9 phases, 4,212 queries |
 | A killed process loses no acknowledged commit and leaves no partial transaction | `tests/crash/run.sh` | 40 kills per run |
 | Typed sessions, page bounds and typed expressions accept and reject what they should | `typed` suite and `tests/typecheck` | 1 run; 3 programs that compile, 8 that are rejected |
+| HTTP requests are parsed or rejected, and values are rendered as valid JSON | `server` suite | 9 tests |
+| The server returns the documented status and body, rolls back a transaction a request leaves open, survives clients that disconnect, and releases the lock at shutdown | `tests/server/run.sh` | 25 checks, on macOS and on Alpine |
+| The container image runs with a read-only root and no capabilities, stops cleanly on SIGTERM, keeps its data, never opens a database whose holder is alive, and takes over a dead holder's lock only when told to | `tests/container/run.sh` | 9 checks |
 
 ## Assumed
 
@@ -187,6 +191,10 @@ Figures are from the reference machine in `docs/PLATFORM_CONSTRAINTS.md`.
 | No other program writes into the database directory | Page files have no protection beyond a checksum |
 | A torn write changes the page's 32-bit hash | The checksum is not a CRC and is not designed against adversaries |
 | Two databases never get the same id: a nanosecond clock reading mixed with the process id | The id is what pairs a log with its database |
+| The process that starts the server ignores SIGPIPE | The socket library cannot suppress it, and a client that disconnects mid-response would otherwise end the server. The container's entry point does this. |
+| A lock holder that stops touching its `.alive` file for 30 seconds is dead, and two containers do not find the same dead holder at the same moment | `IDRISQL_BREAK_LOCK=1` and the Terraform module's `break_stale_lock` take the lock over on that evidence |
+| Nothing outside the container image uses `--break-lock` on a database that is open | The option is unconditional in the engine |
+| The Terraform module in `deploy/aws` behaves on AWS as its configuration reads | It has passed `terraform validate` and has never been applied |
 
 ## Known limitations
 
@@ -195,9 +203,11 @@ Figures are from the reference machine in `docs/PLATFORM_CONSTRAINTS.md`.
 | No proof that the optimizer preserves meaning | Types fix the result shape only |
 | No proof of B+ tree invariants across operations | Model-tested, and validated on demand |
 | No proof of recovery | Fault-injected and kill-tested |
-| Termination of 23 modules is unproved | Bounded at run time where a corrupted structure could loop, with one exception in the next row |
+| Termination of 24 modules is unproved | Bounded at run time where a corrupted structure could loop, with one exception in the next row |
 | A scan follows leaf links without a bound | A corrupted leaf chain that forms a cycle makes a scan loop. `.check` detects the cycle. |
 | Unused linear pattern variables are accepted by the compiler | Described under "Transaction state of a typed session" |
 | Power loss | Outside what the platform allows; see `docs/TRANSACTIONS.md` |
 | A misdirected write is not detected | The checksum does not cover the page number, so a whole valid page in the wrong file passes |
 | A non-root leaf can stay empty after deletes | Counted by the validator, not treated as damage |
+| A client can stall the HTTP server | No timeouts and one request at a time: a connection that sends nothing holds the server until it closes |
+| The bearer token comparison is not constant-time | `docs/SERVER.md`, "Limits" |

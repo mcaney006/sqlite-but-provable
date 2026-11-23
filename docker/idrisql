@@ -1,0 +1,4 @@
+#!/bin/sh
+# Start the compiled program directly, so that signals reach it.
+app=/opt/idrisql/idrisql_app
+LD_LIBRARY_PATH="$app${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" exec "$app/idrisql.so" "$@"

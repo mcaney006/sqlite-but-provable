@@ -37,7 +37,9 @@ RUN make check-rules test-unit test-typecheck test-differential test-server demo
  && ROUNDS=10 make test-crash
 
 # The image that ships: Chez Scheme's runtime, the compiled program, and
-# two shell scripts.
+# two shell scripts. The version and revision labels are not set here: the
+# build names them with --label (`make docker`, or the workflow), so an
+# image built without them makes no claim about what it holds.
 FROM base AS runtime
 LABEL org.opencontainers.image.title="IdrisQL" \
       org.opencontainers.image.description="An embedded SQL database engine written in Idris 2, with an HTTP server" \

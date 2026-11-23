@@ -46,6 +46,18 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,scope=${{ matrix.arch }},mode=max
 
+      # The version label is the version in idrisql.ipkg. A v* tag must
+      # agree with it: a release that reports another version is a mistake.
+      - name: Version
+        id: version
+        run: |
+          version="$(sed -n 's/^version = //p' idrisql.ipkg)"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match version $version in idrisql.ipkg"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Runtime image
         uses: docker/build-push-action@v7
         with:
@@ -53,9 +65,14 @@ jobs:
           target: runtime
           load: true
           tags: idrisql:ci
+          labels: |
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.arch }}
 
       - name: Start, query, stop and restart the container
+        env:
+          REVISION: ${{ github.sha }}
         run: tests/container/run.sh idrisql:ci
 
       # Registry names are lower case; a fork's owner may not be.
@@ -78,6 +95,9 @@ jobs:
           context: .
           target: runtime
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          labels: |
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.arch }}
 
       - name: Record the digest

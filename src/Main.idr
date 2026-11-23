@@ -89,7 +89,7 @@ main = do
   args <- getArgs
   let given = drop 1 args
   when ("--help" `elem` given) (putStr usage >> exitSuccess)
-  when ("--version" `elem` given) (putStrLn "idrisql 0.1.0 (file format 1)" >> exitSuccess)
+  when ("--version" `elem` given) (putStrLn "idrisql 0.2.0 (file format 1)" >> exitSuccess)
   Right parsed <- pure (parseArgs given (MkArgs Nothing Nothing Nothing Nothing Nothing "127.0.0.1" 100000 defaultOptions))
     | Left msg => fail (msg ++ "\n" ++ usage)
   Just path <- pure parsed.database

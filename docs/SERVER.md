@@ -199,7 +199,9 @@ after the test stage has passed on that architecture.
 |---|---|
 | `edge` | The latest commit on `main` |
 | `sha-<commit>` | One commit. Use this, or a digest, where the version must not move. |
-| `<version>` | A `v*` tag, when one is pushed |
+| `<version>` | One `v*` tag: `v0.2.0` publishes `0.2.0` |
+| `<major>.<minor>` | The `v*` tag of that series pushed last: `v0.2.0` also publishes `0.2` |
+| `latest` | The `v*` tag pushed last. Pre-release tags such as `v0.3.0-rc.1` do not move it. |
 
 ```sh
 docker run -d --name idrisql -p 127.0.0.1:5480:5480 \

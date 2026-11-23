@@ -3,42 +3,194 @@ name: ci
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-jobs:
-  test:
-    runs-on: macos-15
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-      - name: Install Idris 2 and SQLite
+jobs:
+  # Builds the image for one architecture on a runner of that architecture.
+  # The test stage runs every suite inside Alpine; the image is pushed only
+  # if it passed, and never from a pull request.
+  container:
+    name: container (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Every test suite, inside Alpine
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: test
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,scope=${{ matrix.arch }},mode=max
+
+      - name: Runtime image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: runtime
+          load: true
+          tags: idrisql:ci
+          cache-from: type=gha,scope=${{ matrix.arch }}
+
+      - name: Start, query, stop and restart the container
+        run: tests/container/run.sh idrisql:ci
+
+      # Registry names are lower case; a fork's owner may not be.
+      - name: Image name
+        if: github.event_name != 'pull_request'
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - uses: docker/login-action@v4
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push by digest
+        id: push
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: runtime
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.arch }}
+
+      - name: Record the digest
+        if: github.event_name != 'pull_request'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
         run: |
-          brew install idris2 sqlite
-          idris2 --version
-          # The sources are checked against this release only.
-          idris2 --version | grep -q '0\.8\.0'
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@v7
+        if: github.event_name != 'pull_request'
+        with:
+          name: digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Joins the two images under one name: edge for main, the version for a
+  # v* tag, and the commit for both.
+  publish:
+    if: github.event_name != 'pull_request'
+    needs: container
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v6
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=edge,branch=main
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long
+
+      - name: Publish the multi-architecture image
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "$IMAGE@sha256:%s " *)
+
+      - name: Inspect
+        run: docker buildx imagetools inspect "$IMAGE:${{ steps.meta.outputs.version }}"
+
+  # The same suites outside a container, with the toolchain pixi builds.
+  pixi:
+    name: pixi (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: prefix-dev/setup-pixi@v0.11.3
+        with:
+          locked: true
+
+      # Chez Scheme and Idris 2 take minutes to build from source.
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/idrisql
+          key: toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/pixi-activate.sh', 'scripts/pixi-toolchain.sh', 'pixi.lock') }}
 
       - name: Build
-        run: make build
+        run: pixi run build
 
-      - name: Banned constructs
-        run: make check-rules
+      - name: Every test suite
+        run: ROUNDS=15 pixi run test
 
-      - name: Unit, storage, SQL and typed-API tests
-        run: make test-unit
+  terraform:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
 
-      - name: Programs that must and must not compile
-        run: make test-typecheck
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.16.4
 
-      - name: Differential tests against sqlite3
-        run: make test-differential
+      - name: Format
+        run: terraform fmt -check -recursive deploy/aws
 
-      - name: SIGKILL crash test
-        run: ROUNDS=15 make test-crash
+      - name: Validate the module
+        run: |
+          terraform -chdir=deploy/aws init -backend=false -input=false
+          terraform -chdir=deploy/aws validate
 
-      - name: Demonstration script
-        run: make demo
+      - name: Validate the example
+        run: |
+          terraform -chdir=deploy/aws/examples/basic init -backend=false -input=false
+          terraform -chdir=deploy/aws/examples/basic validate

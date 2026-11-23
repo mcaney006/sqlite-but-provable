@@ -137,6 +137,48 @@ make microbench
 `bench/run.sh` needs `sqlite3` on the PATH and writes its working files to
 `build/bench/`.
 
+## Build times
+
+Measured on the reference machine with Idris 2 0.8.0, 37 modules. Single
+runs, taken while Spotlight was indexing and the load average was between 7
+and 8 on 10 cores, so read them as upper bounds.
+
+| Action | Command | Time |
+|---|---|---:|
+| Clean build | `make build` | 9.3 s |
+| Build with nothing changed | `make build` | 3.2 s |
+| Type-check with nothing changed | `idris2 --typecheck idrisql.ipkg` | 1.1 s |
+| Type-check after editing the body of a leaf module | same | 1.1 s |
+| Type-check after editing the body of `Engine.idr` | same | 1.6 s |
+| Type-check after adding an export to `Types.idr`, which most modules import | same | 5.8 s |
+| Build after editing a leaf module | `make build` | 5.9 s |
+| Incremental build, clean | `make dev` | 13.4 s |
+| Incremental build, nothing changed | `make dev` | 0.8 s |
+| Incremental build after editing a leaf module | `make dev` | 1.3 s |
+
+Idris re-checks a module's dependents only when its exported interface
+changes, which is why a body edit costs about a second and a new export
+costs six. `make build` compiles the whole program with Chez Scheme at
+every run; that step is the 3.2 seconds. `make dev` sets
+`IDRIS2_INC_CGS=chez`, which compiles each module separately and skips
+whole-program optimisation. The speed of the program it produces has not
+been measured, and every other figure in this document is for `make build`.
+
+In Docker (OrbStack, `linux/arm64`), building the runtime image:
+
+| Action | Time |
+|---|---:|
+| First build, empty module cache | 17.9 s |
+| After changing a string in `Main.idr` | 4.9 s and 7.2 s |
+| After editing a leaf module (`build` stage only) | 7.0 s |
+| After adding an export to `Types.idr` (`build` stage only) | 10.5 s |
+| A leaf edit without the module cache (`build` stage only) | 14.7 s and 12.7 s |
+
+The Dockerfile keeps the checked modules of the previous build in a
+BuildKit cache mount, and `docker/cached-build.sh` decides by content
+which of them are still current. A CI runner starts without that cache
+and compiles everything.
+
 ## Sensitivity to other load
 
 The tables above were measured while the machine was otherwise idle. A

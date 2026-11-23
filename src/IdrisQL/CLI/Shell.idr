@@ -31,7 +31,10 @@ record ShellConfig where
 
 data Lex = Code | InString | InIdent | LineComment | BlockComment
 
--- Returns the complete statements and the unfinished remainder.
+||| The complete statements in `text` and the unfinished remainder. A
+||| semicolon inside a string, a quoted identifier or a comment does not
+||| end a statement.
+export
 splitStatements : String -> (List String, String)
 splitStatements text = go Code [] [] (unpack text)
   where

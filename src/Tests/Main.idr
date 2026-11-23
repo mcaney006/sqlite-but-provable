@@ -3,6 +3,7 @@ module Tests.Main
 import Data.List
 import System
 import Tests.Harness
+import Tests.Server
 import Tests.Sql
 import Tests.SqlFrontend
 import Tests.Storage
@@ -14,6 +15,7 @@ suites =
   , ("storage", storageTests)
   , ("sql", sqlTests)
   , ("typed", typedTests)
+  , ("server", serverTests)
   ]
 
 ||| Run every suite, or only those named on the command line. Exits non-zero

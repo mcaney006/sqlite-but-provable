@@ -1,7 +1,8 @@
 # Platform constraints
 
-IdrisQL is written in Idris 2 and uses only the `base` and `linear` packages
-that ship with the compiler. It declares no foreign functions. This document
+IdrisQL is written in Idris 2 and uses only packages that ship with the
+compiler: `base` and `linear` for the engine, and `network` for the HTTP
+server. It declares no foreign functions. This document
 records what that platform can and cannot do, measured before the storage
 layer was designed, and the design decisions each fact forced.
 
@@ -16,8 +17,11 @@ layer was designed, and the design decisions each fact forced.
 | Memory | 16 GiB |
 | Packages used | `base`, `linear` |
 
-CI builds with the Homebrew `idris2` formula on a `macos-15` runner
-(`.github/workflows/ci.yml`).
+CI (`.github/workflows/ci.yml`) builds and tests in three other
+environments: Alpine 3.24 with its `idris2` 0.8.0 and `chez-scheme` 10.3.0
+packages on `linux/amd64` and `linux/arm64`, and a toolchain built from
+source by `scripts/pixi-toolchain.sh` (Idris 2 0.8.0, Chez Scheme 10.3.0)
+on `ubuntu-24.04` and `macos-15`.
 
 ## File operations `base` provides
 
@@ -91,6 +95,25 @@ at a time on little-endian hosts.
 | Mutual exclusion | A `LOCK` directory inside the database directory, created at open and removed at close |
 | Stale locks | No way to ask whether the process that made `LOCK` is alive. A lock left by a dead process is taken over only with the explicit `--break-lock` option. |
 | Concurrency | One process, one connection, one writer. See `docs/TRANSACTIONS.md`. |
+
+## Network operations `network` provides and does not provide
+
+`src/IdrisQL/Server/Serve.idr` is the only module that uses sockets.
+
+| Provided | Function |
+|---|---|
+| Create, bind, listen, accept, close | `socket`, `bind`, `listen`, `accept`, `close` |
+| Receive up to N bytes | `recvBytes`; an error result covers both end of stream and failure |
+| Send bytes once, possibly fewer than given | `sendBytes` |
+
+| Missing | Consequence |
+|---|---|
+| Socket options, including `SO_REUSEADDR` | A restart on the same port waits for the kernel to release it; the server retries its bind for 75 seconds |
+| `MSG_NOSIGNAL`, and a SIGPIPE handler in `System.Signal` | The process that starts the server must ignore SIGPIPE |
+| A SIGTERM handler in `System.Signal` | A clean stop is an HTTP request from the loopback address, sent by the container's entry point |
+| Timeouts, `select` or `poll` | One connection is served at a time, and a silent client holds it |
+| A configurable listen backlog | Fixed at 20 connections |
+| TLS | Terminated by a load balancer, or not at all |
 
 ## A property of the generated program worth knowing
 

@@ -3,7 +3,7 @@ version = 0.1.0
 brief = "An embedded SQL database engine written in Idris 2"
 langversion >= 0.8.0
 
-depends = base, linear
+depends = base, linear, network
 
 sourcedir = "src"
 
@@ -25,6 +25,8 @@ modules = IdrisQL
         , IdrisQL.Query.Planner
         , IdrisQL.Query.Sorter
         , IdrisQL.Query.Statement
+        , IdrisQL.Server.Http
+        , IdrisQL.Server.Serve
         , IdrisQL.SQL.AST
         , IdrisQL.SQL.Analyzer
         , IdrisQL.SQL.Lexer

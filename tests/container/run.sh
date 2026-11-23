@@ -5,8 +5,10 @@
 # container never opens the database while the first is alive.
 #
 #   tests/container/run.sh [IMAGE]     default idrisql:dev
-#   PORT    first of two host ports to use (default 15482)
-#   DOCKER  docker command (default docker)
+#   PORT      first of two host ports to use (default 15482)
+#   DOCKER    docker command (default docker)
+#   REVISION  what the image's revision label must be; empty means no
+#             label. Unset, the label must be a commit.
 set -u
 image="${1:-idrisql:dev}"
 port="${PORT:-15482}"
@@ -47,6 +49,21 @@ up() {
 }
 
 query() { curl -s -m 20 -X POST -H "Authorization: Bearer $token" --data-binary "$2" "$1/query"; }
+
+# The labels say which release and commit the image holds. The version
+# must be the one the program reports.
+label() { $docker image inspect -f "{{index .Config.Labels \"org.opencontainers.image.$1\"}}" "$image" 2>/dev/null; }
+
+reports="$($docker run --rm "$image" --version 2>/dev/null | cut -d' ' -f2)"
+got="$(label version)"
+if [ -n "$reports" ] && [ "$got" = "$reports" ]; then ok
+else bad "the version label is '$got' and the program reports '$reports'"; fi
+
+got="$(label revision)"
+if [ "${REVISION+set}" = set ]; then
+  if [ "$got" = "$REVISION" ]; then ok; else bad "the revision label is '$got', expected '$REVISION'"; fi
+elif printf '%s' "$got" | grep -Eq '^[0-9a-f]{40}(-dirty)?$'; then ok
+else bad "the revision label is '$got', which is not a commit"; fi
 
 run "$name" "$port" || { echo "container: could not start $image"; exit 1; }
 if up "$first" 100; then ok; else bad "the server did not answer"; $docker logs "$name"; exit 1; fi

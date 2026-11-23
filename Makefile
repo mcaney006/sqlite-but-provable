@@ -72,8 +72,16 @@ microbench: build/exec/idrisql-microbench
 DOCKER ?= docker
 IMAGE ?= idrisql:dev
 
+# The image's version label is the version in idrisql.ipkg. Its revision
+# label is the commit, marked -dirty when the tree differs from it, and is
+# left out where there is no git checkout to ask.
+VERSION := $(shell sed -n 's/^version = //p' idrisql.ipkg)
+REVISION := $(shell r=$$(git rev-parse HEAD 2>/dev/null) || exit 0; [ -z "$$(git status --porcelain 2>/dev/null)" ] || r=$$r-dirty; echo $$r)
+
 docker:
-	$(DOCKER) build --target runtime -t $(IMAGE) .
+	$(DOCKER) build --target runtime -t $(IMAGE) \
+	  --label org.opencontainers.image.version=$(VERSION) \
+	  $(if $(REVISION),--label org.opencontainers.image.revision=$(REVISION)) .
 
 docker-test:
 	$(DOCKER) build --target test -t $(IMAGE)-test .
@@ -81,7 +89,7 @@ docker-test:
 # Runs the image as deploy/aws does and checks start, stop, restart and a
 # stale lock.
 test-container: docker
-	DOCKER=$(DOCKER) tests/container/run.sh $(IMAGE)
+	DOCKER=$(DOCKER) REVISION=$(REVISION) tests/container/run.sh $(IMAGE)
 
 clean:
 	rm -rf build build-inc

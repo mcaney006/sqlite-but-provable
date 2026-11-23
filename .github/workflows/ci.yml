@@ -96,8 +96,8 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Joins the two images under one name: edge for main, the version for a
-  # v* tag, and the commit for both.
+  # Joins the two images under one name: edge for main; the version, its
+  # major.minor series and latest for a v* tag; and the commit for both.
   publish:
     if: github.event_name != 'pull_request'
     needs: container
@@ -128,6 +128,9 @@ jobs:
         id: meta
         with:
           images: ${{ env.IMAGE }}
+          # auto: only a v* tag that is not a pre-release moves latest.
+          flavor: |
+            latest=auto
           tags: |
             type=edge,branch=main
             type=semver,pattern={{version}}

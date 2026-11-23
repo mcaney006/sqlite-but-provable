@@ -31,6 +31,9 @@ fi
 
 idris2 --build idrisql.ipkg
 
+# The key goes first and comes back last: a copy that is cut short leaves
+# a cache without one, which the next build ignores.
+rm -f "$cache/key"
 rm -rf "$cache/ttc"
 cp -a build/ttc "$cache/ttc"
 cp "$sums" "$cache/sources.sha256"

@@ -79,6 +79,12 @@ currentSchema : Engine -> IO Schema
 currentSchema eng = readIORef eng.schemaRef
 
 ||| True between BEGIN and COMMIT or ROLLBACK.
+||| False once a storage failure has made the connection refuse every
+||| statement. Only reopening the database, which runs recovery, helps.
+export
+usable : Engine -> IO Bool
+usable eng = map not (isPoisoned eng.pager)
+
 export
 inTransaction : Engine -> IO Bool
 inTransaction eng = readIORef eng.explicitTxn

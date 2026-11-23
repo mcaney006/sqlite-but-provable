@@ -16,14 +16,14 @@ State of the repository on 2026-11-21.
 | Constraints: PRIMARY KEY, UNIQUE, NOT NULL, DEFAULT, CHECK | `sql` suite and differential tests |
 | Write-ahead log, checkpoints, recovery | Fault at every write, torn writes, 40 SIGKILL rounds |
 | Shell, library API, typed session API | `sql` and `typed` suites, `tests/typecheck` |
-| HTTP server | `server` suite; `tests/server/run.sh`, 25 checks against the real program on a socket |
+| HTTP server | `server` suite; `tests/server/run.sh`, 29 checks against the real program on a socket |
 | Container image for `linux/amd64` and `linux/arm64` | Every suite runs inside Alpine during the build; `tests/container/run.sh`, 9 checks |
 | pixi build | `pixi run test` on Linux and macOS in CI |
 | Terraform module for AWS (`deploy/aws`) | `terraform validate` only. Never applied. |
 | CI and image publishing | `.github/workflows/ci.yml` |
 
-`make test` runs 293 unit tests, 11 compile-time cases, 180 differential
-checks, the crash test and the 25 server checks. `make docker-test` runs
+`make test` runs 296 unit tests, 11 compile-time cases, 180 differential
+checks, the crash test and the 29 server checks. `make docker-test` runs
 the same inside Alpine, and `make test-container` checks the image.
 
 ## Not built
@@ -46,7 +46,7 @@ the same inside Alpine, and `make test-container` checks the image.
 
 | Measure | Value |
 |---|---|
-| Source | About 10,500 lines of engine, shell and server; 2,400 lines of tests |
+| Source | About 10,600 lines of engine, shell and server; 2,400 lines of tests |
 | 200,000-row load, 3 indexes, one transaction | 21.3 s (SQLite 0.58 s) |
 | 1,000 single-row transactions | 1.13 s (SQLite without fsync 0.34 s) |
 | B+ tree lookup in memory | 9.4 µs |

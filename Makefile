@@ -1,7 +1,7 @@
 IDRIS2 ?= idris2
 SRC := $(shell find src -name '*.idr')
 
-.PHONY: all build dev test test-unit test-typecheck test-differential test-crash \
+.PHONY: all build dev serve test test-unit test-typecheck test-differential test-crash \
         test-server test-container check-rules demo bench microbench docker docker-test clean
 
 all: build
@@ -23,6 +23,15 @@ build/exec/idrisql-tests: build/exec/idrisql $(SRC)
 
 build/exec/idrisql-microbench: build/exec/idrisql $(SRC)
 	$(IDRIS2) -p linear --source-dir src -o idrisql-microbench src/Bench/Micro.idr
+
+# The HTTP server on DB and PORT. SIGPIPE is ignored first: the socket
+# library cannot suppress it, and a client that disconnects mid-response
+# would otherwise end the server and leave the lock behind.
+DB ?= main.idb
+PORT ?= 5480
+
+serve: build/exec/idrisql
+	trap '' PIPE; ./build/exec/idrisql $(DB) --serve $(PORT) --host 127.0.0.1
 
 # Every suite. test-differential needs sqlite3 on the PATH and test-server
 # needs curl.

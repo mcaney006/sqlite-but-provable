@@ -52,6 +52,6 @@ USER idrisql
 VOLUME /data
 EXPOSE 5480
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s \
-  CMD wget -q -O /dev/null "http://127.0.0.1:${IDRISQL_PORT:-5480}/health" || exit 1
+  CMD wget -q -Y off -O /dev/null "http://127.0.0.1:${IDRISQL_PORT:-5480}/health" || exit 1
 ENTRYPOINT ["idrisql-entrypoint"]
 CMD ["serve"]

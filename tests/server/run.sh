@@ -104,6 +104,23 @@ sql "the next request sees the committed row and not the rolled-back one" 200 \
 
 sql "an empty request" 200 '{"results":[]}' ""
 
+sql "comments after and between statements are not statements" 200 \
+  '{"results":[{"columns":["1"],"rows":[[1]]},{"columns":["2"],"rows":[[2]]}]}' \
+  "SELECT 1; -- between
+   ; SELECT 2; /* after */ -- the end"
+
+check "two Content-Length headers that disagree" 400 '{"error":"conflicting Content-Length headers"}' \
+  -X POST "$base/query" -H 'Content-Length: 8' -H 'Content-Length: 9' --data-binary "SELECT 1"
+
+# curl waits a second for 100 Continue before it sends a body it announced
+# this way; an answer that takes that long means the server never sent it.
+took="$(curl -s -m 20 -o "$work/body" -w '%{time_total}' -X POST "$base/query" -H 'Expect: 100-continue' --data-binary "SELECT 7")"
+if [ "$(cat "$work/body")" = '{"results":[{"columns":["7"],"rows":[[7]]}]}' ] && awk -v t="$took" 'BEGIN { exit !(t < 0.9) }'; then
+  passed=$((passed + 1))
+else
+  failed=$((failed + 1)); echo "FAIL Expect: 100-continue took ${took}s and returned $(cat "$work/body")"
+fi
+
 printf '\377\376' > "$work/not-utf8"
 check "a body that is not UTF-8" 400 '{"error":"request body is not UTF-8"}' \
   -X POST "$base/query" --data-binary "@$work/not-utf8"
@@ -130,6 +147,9 @@ curl -s -m 30 -o "$work/large" -X POST "$base/query" --data-binary "$large"
 rows="$(tr -cd '[' < "$work/large" | wc -c | tr -d ' ')"
 # One bracket for "results", one for "columns", one for "rows", one per row.
 if [ "$rows" = 60003 ]; then passed=$((passed + 1)); else failed=$((failed + 1)); echo "FAIL large result: $rows brackets"; fi
+sql "the row limit is for the whole response" 400 \
+  '{"error":"runtime error: the result has more rows than the server'"'"'s limit; add LIMIT","kind":"runtime","completed":1}' \
+  "$large; $large"
 sql "a result over the row limit" 400 \
   '{"error":"runtime error: the result has more rows than the server'"'"'s limit; add LIMIT","kind":"runtime","completed":0}' \
   "SELECT a.id FROM big a CROSS JOIN big b"

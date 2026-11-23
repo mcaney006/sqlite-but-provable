@@ -50,14 +50,34 @@ serverTests =
       check (not (validUtf8 [0xF4, 0x90, 0x80, 0x80])) "above U+10FFFF"
       check (not (validUtf8 [0xFF])) "invalid lead byte"
 
-  , pureTest "Content-Length is digits only and never wraps" $ do
-      checkEq "plain" (contentLength "12") (Just 12)
-      checkEq "zero" (contentLength "0") (Just 0)
-      checkEq "past 64 bits" (contentLength "18446744073709551615") Nothing
-      checkEq "signed" (contentLength "+5") Nothing
-      checkEq "negative" (contentLength "-1") Nothing
-      checkEq "empty" (contentLength "") Nothing
-      checkEq "not a number" (contentLength "12a") Nothing
+  , pureTest "a number is digits only and never wraps" $ do
+      checkEq "plain" (decimal "12") (Just 12)
+      checkEq "zero" (decimal "0") (Just 0)
+      checkEq "past 64 bits" (decimal "18446744073709551615") Nothing
+      checkEq "signed" (decimal "+5") Nothing
+      checkEq "negative" (decimal "-1") Nothing
+      checkEq "empty" (decimal "") Nothing
+      checkEq "not a number" (decimal "12a") Nothing
+
+  , pureTest "a request says once, in one way, where its body ends" $ do
+      let framed = \text => map framing (parseHead (bytes ("POST /query HTTP/1.1\r\n" ++ text)))
+      checkEq "one length" (framed "Content-Length: 12") (Just (Length 12))
+      checkEq "no length" (framed "Host: db") (Just NoLength)
+      checkEq "the same length twice" (framed "Content-Length: 12\r\nContent-Length: 12") (Just (Length 12))
+      checkEq "two lengths" (framed "Content-Length: 12\r\nContent-Length: 13") (Just Conflicting)
+      checkEq "a transfer encoding beside a length" (framed "Content-Length: 12\r\nTransfer-Encoding: chunked") (Just NoLength)
+      checkEq "a length that is not a number" (framed "Content-Length: 1e3") (Just NoLength)
+
+  , pureTest "a carriage return that is not part of a line break is refused" $ do
+      checkEq "in the path" (isNothing (parseHead (bytes "GET /a\rb HTTP/1.1"))) True
+      checkEq "in a header" (isNothing (parseHead (bytes "GET / HTTP/1.1\r\nA: b\rc"))) True
+      checkEq "line breaks alone" (isJust (parseHead (bytes "GET / HTTP/1.1\r\nA: b"))) True
+
+  , pureTest "a client can ask to be told before it sends a body" $ do
+      let asks = \text => map expectsContinue (parseHead (bytes ("POST /query HTTP/1.1\r\n" ++ text)))
+      checkEq "asked" (asks "Expect: 100-continue") (Just True)
+      checkEq "asked in capitals" (asks "EXPECT: 100-Continue") (Just True)
+      checkEq "not asked" (asks "Host: db") (Just False)
 
   , pureTest "a listen address is four numbers from 0 to 255" $ do
       checkEq "loopback" (validIPv4 "127.0.0.1") True

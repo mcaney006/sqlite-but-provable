@@ -4,7 +4,7 @@ An embedded SQL database engine written in Idris 2. It stores data in its
 own page format, runs SQL through a typed intermediate representation, and
 recovers committed transactions after the process is killed.
 
-The engine, shell and server are about 10,500 lines of Idris with no
+The engine, shell and server are about 10,600 lines of Idris with no
 foreign functions and no `believe_me`. The engine depends on the `base` and
 `linear` packages that ship with the compiler, and the HTTP server adds
 `network`, which ships with it too. SQLite appears only in the tests and
@@ -168,11 +168,11 @@ what is known not to hold.
 
 ```sh
 make test               # the next five; needs sqlite3 and curl on the PATH
-make test-unit          # 293 tests: lexer and parser, storage, SQL, typed API, HTTP
+make test-unit          # 296 tests: lexer and parser, storage, SQL, typed API, HTTP
 make test-typecheck     # 3 programs that must compile, 8 that must not
 make test-differential  # 180 comparisons with the sqlite3 shell
 make test-crash         # 40 rounds of SIGKILL and recovery
-make test-server        # 25 checks of the HTTP server on a real socket
+make test-server        # 29 checks of the HTTP server on a real socket
 make docker-test        # all of the above inside Alpine
 make test-container     # 9 checks of the container image
 make bench              # 200,000 rows, timed against SQLite, results compared

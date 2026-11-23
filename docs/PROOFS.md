@@ -177,8 +177,8 @@ Figures are from the reference machine in `docs/PLATFORM_CONSTRAINTS.md`.
 | Results equal SQLite's at 200,000 rows with a pool smaller than the data | `bench/run.sh` | 9 phases, 4,212 queries |
 | A killed process loses no acknowledged commit and leaves no partial transaction | `tests/crash/run.sh` | 40 kills per run |
 | Typed sessions, page bounds and typed expressions accept and reject what they should | `typed` suite and `tests/typecheck` | 1 run; 3 programs that compile, 8 that are rejected |
-| HTTP requests are parsed or rejected, and values are rendered as valid JSON | `server` suite | 9 tests |
-| The server returns the documented status and body, rolls back a transaction a request leaves open, survives clients that disconnect, and releases the lock at shutdown | `tests/server/run.sh` | 25 checks, on macOS and on Alpine |
+| HTTP requests are parsed or rejected, and values are rendered as valid JSON | `server` suite | 12 tests |
+| The server returns the documented status and body, rolls back a transaction a request leaves open, survives clients that disconnect, and releases the lock at shutdown | `tests/server/run.sh` | 29 checks, on macOS and on Alpine |
 | The container image runs with a read-only root and no capabilities, stops cleanly on SIGTERM, keeps its data, never opens a database whose holder is alive, and takes over a dead holder's lock only when told to | `tests/container/run.sh` | 9 checks |
 
 ## Assumed
@@ -192,7 +192,7 @@ Figures are from the reference machine in `docs/PLATFORM_CONSTRAINTS.md`.
 | A torn write changes the page's 32-bit hash | The checksum is not a CRC and is not designed against adversaries |
 | Two databases never get the same id: a nanosecond clock reading mixed with the process id | The id is what pairs a log with its database |
 | The process that starts the server ignores SIGPIPE | The socket library cannot suppress it, and a client that disconnects mid-response would otherwise end the server. The container's entry point does this. |
-| A lock holder that stops touching its `.alive` file for 30 seconds is dead, and two containers do not find the same dead holder at the same moment | `IDRISQL_BREAK_LOCK=1` and the Terraform module's `break_stale_lock` take the lock over on that evidence |
+| A lock holder that has not touched its `.alive` file for 30 seconds is dead or has killed its own server, and two containers do not find the same dead holder at the same moment | `IDRISQL_BREAK_LOCK=1` and the Terraform module's `break_stale_lock` take the lock over on that evidence |
 | Nothing outside the container image uses `--break-lock` on a database that is open | The option is unconditional in the engine |
 | The Terraform module in `deploy/aws` behaves on AWS as its configuration reads | It has passed `terraform validate` and has never been applied |
 

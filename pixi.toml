@@ -64,5 +64,5 @@ cmd = "./build/exec/idrisql main.idb"
 depends-on = ["build"]
 
 [tasks.serve]
-cmd = "./build/exec/idrisql main.idb --serve 5480 --host 127.0.0.1"
-depends-on = ["build"]
+cmd = "make serve"
+depends-on = ["toolchain"]

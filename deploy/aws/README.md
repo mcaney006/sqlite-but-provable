@@ -77,7 +77,7 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 | `desired_count` | `1` | 1 to run, 0 to stop and keep the data |
 | `cpu`, `memory` | `512`, `1024` | Fargate task size |
 | `cpu_architecture` | `ARM64` | `ARM64` or `X86_64` |
-| `max_rows` | `100000` | Largest result one statement may return |
+| `max_rows` | `100000` | Most rows one response may hold |
 | `break_stale_lock` | `true` | Take over the lock of a task that has stopped marking itself alive |
 | `idle_timeout_seconds` | `60` | Load balancer's wait for a response |
 | `health_check_unhealthy_threshold` | `5` | Failed checks before the task is replaced |
@@ -119,8 +119,13 @@ a new task that finds a lock exits, and after a killed task someone has to
 remove the lock by hand.
 
 What remains unguarded: two new tasks that both find the same dead holder
-at the same moment would both take the lock. The service settings above
-do not start two tasks together.
+at the same moment would both take the lock, and the heartbeat detects a
+dead holder without fencing a live one that cannot write it. The service
+settings above do not start two tasks together, and a task that cannot
+write its heartbeat for about ten seconds kills its own server.
+
+A storage failure that leaves the engine unusable makes the server exit
+with status 1. ECS then starts a new task, which runs recovery.
 
 The cost of all this is a gap in service on every deployment and every
 task replacement: the old task stops, the new one waits, pulls the image
@@ -169,6 +174,10 @@ together if statements need longer.
 Without `certificate_arn` the bearer token crosses the VPC in clear text
 between client and load balancer. Between load balancer and task it is
 always HTTP.
+
+With `certificate_arn`, the `endpoint` output is still the load balancer's
+own name, which your certificate does not cover. Create a DNS alias to
+`load_balancer_dns_name` in the certificate's domain and use that.
 
 The generated token is a 48-character random string. Terraform creates it
 as an ephemeral value and sends it to Secrets Manager through a write-only

@@ -164,7 +164,9 @@ every run; that step is the 3.2 seconds. `make dev` sets
 whole-program optimisation. The speed of the program it produces has not
 been measured, and every other figure in this document is for `make build`.
 
-In Docker (OrbStack, `linux/arm64`), building the runtime image:
+In Docker (OrbStack, `linux/arm64`, Alpine's Idris 2 0.8.0 on Chez Scheme
+10.3.0, not the 10.4.1 the rest of this document used), building the
+runtime image:
 
 | Action | Time |
 |---|---:|

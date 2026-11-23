@@ -23,7 +23,7 @@ usage = """
     --file PATH         run the statements in a file and exit
     --serve PORT        answer SQL over HTTP on PORT until told to stop
     --host ADDRESS      IPv4 address to serve on (default 127.0.0.1)
-    --max-rows N        largest result a served statement may return (default 100000)
+    --max-rows N        most rows one served response may hold (default 100000)
     --mode list|table   output format (default: table on a terminal, list otherwise)
     --cache PAGES       buffer pool size in 4 KiB pages (default 2048)
     --checkpoint BYTES  log size that triggers a checkpoint (default 4194304)
@@ -51,16 +51,18 @@ parseArgs : List String -> Args -> Either String Args
 parseArgs [] a = Right a
 parseArgs ("--execute" :: sql :: rest) a = parseArgs rest ({ execute := Just sql } a)
 parseArgs ("--file" :: path :: rest) a = parseArgs rest ({ file := Just path } a)
-parseArgs ("--serve" :: n :: rest) a = case parsePositive {a = Int} n of
+parseArgs ("--serve" :: n :: rest) a = case decimal n of
   Just port =>
-    if port >= 1 && port <= 65535 then parseArgs rest ({ serve := Just port } a)
+    if port >= 1 && port <= 65535 then parseArgs rest ({ serve := Just (cast port) } a)
       else Left ("--serve needs a port from 1 to 65535, got " ++ n)
   Nothing => Left ("--serve needs a port number, got " ++ n)
 parseArgs ("--host" :: addr :: rest) a =
   if validIPv4 addr then parseArgs rest ({ host := addr } a)
     else Left ("--host needs an IPv4 address such as 127.0.0.1, got " ++ addr)
-parseArgs ("--max-rows" :: n :: rest) a = case parsePositive {a = Nat} n of
-  Just rows => parseArgs rest ({ maxRows := rows } a)
+parseArgs ("--max-rows" :: n :: rest) a = case decimal n of
+  Just rows =>
+    if rows >= 1 then parseArgs rest ({ maxRows := cast rows } a)
+      else Left ("--max-rows needs a number from 1 up, got " ++ n)
   Nothing => Left ("--max-rows needs a number, got " ++ n)
 parseArgs ("--mode" :: "list" :: rest) a = parseArgs rest ({ mode := Just ListMode } a)
 parseArgs ("--mode" :: "table" :: rest) a = parseArgs rest ({ mode := Just TableMode } a)

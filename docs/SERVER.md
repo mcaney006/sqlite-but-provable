@@ -3,7 +3,7 @@
 `idrisql DATABASE --serve PORT` opens one database and answers SQL over
 HTTP/1.1 until it is told to stop. The container image runs that command.
 The server is `src/IdrisQL/Server/Http.idr` (request parsing and JSON, pure
-and total) and `src/IdrisQL/Server/Serve.idr` (sockets), about 450 lines
+and total) and `src/IdrisQL/Server/Serve.idr` (sockets), about 550 lines
 together.
 It uses the `network` package that ships with Idris 2; the engine itself
 still needs only `base` and `linear`.
@@ -22,13 +22,18 @@ survive power loss (`docs/TRANSACTIONS.md`).
 idrisql shop.idb --serve 5480                      # 127.0.0.1 only
 idrisql shop.idb --serve 5480 --host 0.0.0.0       # every interface
 IDRISQL_TOKEN=change-me idrisql shop.idb --serve 5480
+make serve DB=shop.idb PORT=5480                   # the first, with SIGPIPE ignored
 ```
+
+Start it from a shell that ignores SIGPIPE (`trap '' PIPE`), as `make
+serve`, `pixi run serve` and the container do. "Signals and stopping"
+says why.
 
 | Option | Default | Meaning |
 |---|---|---|
 | `--serve PORT` | none | Serve instead of opening the shell |
 | `--host ADDRESS` | `127.0.0.1` | IPv4 address to listen on, as four numbers. Host names are refused. |
-| `--max-rows N` | 100000 | Largest result one statement may return |
+| `--max-rows N` | 100000 | Most rows one response may hold, over all its statements |
 | `IDRISQL_TOKEN` (environment) | unset | When set, `POST /query` needs `Authorization: Bearer <token>` |
 
 The shell's `--cache`, `--checkpoint` and `--break-lock` options apply too.
@@ -87,13 +92,23 @@ of statements that ran before it.
 
 | Status | `kind` or cause |
 |---:|---|
-| 400 | `syntax`, `semantic`, `constraint`, `runtime`, `transaction`, `unsupported`; a body that is not UTF-8; a malformed request |
+| 400 | `syntax`, `semantic`, `constraint`, `runtime`, `transaction`, `unsupported`; a body that is not UTF-8; a malformed request, which includes a carriage return that is not part of a line break; `Content-Length` headers that disagree |
 | 401 | Token missing or wrong |
 | 403 | `/shutdown` from a non-loopback address |
 | 404, 405 | Unknown path, or the wrong method for a known one |
-| 411 | `POST /query` without a usable `Content-Length`. Chunked bodies are not read. |
+| 411 | `POST /query` without a usable `Content-Length`, or with a `Transfer-Encoding`. Chunked bodies are not read. |
 | 413 | Body larger than 1 MiB. The server answers without reading the body, so a client still sending it can see a connection reset in place of the 413. |
 | 500 | `storage` or `committed-then-failed`: see `docs/TRANSACTIONS.md` |
+
+A request with `Expect: 100-continue` gets `100 Continue` before its body
+is read. Text that holds only comments, between statements or after the
+last one, is not a statement.
+
+After a storage failure that leaves the engine's connection unusable, the
+server answers that request with 500 and exits with status 1. The engine
+would refuse every later statement, and only reopening the database, which
+runs recovery, clears it. Under Docker with a restart policy, or under
+ECS, the restart does that.
 
 ### Transactions
 
@@ -111,7 +126,7 @@ third fails, the first two stay committed.
 | Requests in progress | 1. Others wait in the kernel's accept queue, which the socket library sets to 20 connections. |
 | Request header | 16 KiB |
 | Request body | 1 MiB. The body is held as a list of bytes, which takes 16 times its size in memory. |
-| Rows in one result | `--max-rows`, 100,000 by default. A larger result is a 400 that says to add `LIMIT`. |
+| Rows in one response | `--max-rows`, 100,000 by default, counted over every statement in the request. Going over is a 400 that says to add `LIMIT`. |
 | Response | Built in memory as one string, then sent in slices. 60,000 rows of three columns were 1,626,052 bytes and took 0.34 s on the reference machine, and the server's resident memory afterwards was 92 MiB. Choose `--max-rows` with the memory available in mind. |
 | Connections | Closed after each response; no keep-alive |
 | TLS | None. Put a load balancer or a private network in front. |
@@ -140,6 +155,10 @@ program:
 | A client that disconnects before its response is written raises SIGPIPE, which would end the server | Start the server with SIGPIPE ignored (`trap '' PIPE` in the shell that starts it). An ignored signal stays ignored in the started program. The container's entry point does this. |
 | SIGTERM ends the process without closing the database, leaving `LOCK` behind | The container's entry point catches SIGTERM and sends `POST /shutdown` over the loopback address. The server closes the database, which writes a checkpoint and removes the lock, and exits with status 0. |
 
+Both requests from the entry point and the image's health check go to
+`IDRISQL_PORT` and bypass any proxy named in the environment. Set the
+port with that variable, not by passing `--serve` to the container.
+
 SIGKILL cannot be handled. It leaves the lock behind, and the next start
 is refused until `--break-lock` is passed. Committed data is intact either
 way; recovery runs at open.
@@ -153,7 +172,14 @@ file has gone untouched for `IDRISQL_LOCK_STALE_SECONDS` (30 by default),
 and only then passes `--break-lock`. Both times are read from the file
 system that holds the database, so the two containers' clocks do not have
 to agree. A lock with no `.alive` file beside it was taken some other way,
-for example by `idrisql` run directly, and is treated as stale.
+for example by `idrisql` run directly or by a container given another
+command than `serve` or `shell`, and is treated as stale.
+
+This is detection, not fencing. The engine has no notion of who owns the
+lock, so a holder that is alive but has not managed to touch the file for
+that long would be written over. To narrow that case, a container that
+fails to write the file five times in a row, about ten seconds, kills its
+own server.
 
 The socket library also sets no `SO_REUSEADDR`. After a server stops, the
 kernel keeps its port for the length of TCP's TIME_WAIT state: about 30
@@ -234,9 +260,9 @@ a re-check of every file whose content differs. Build times are in
 
 | Test | What it covers | Result |
 |---|---|---|
-| `server` unit suite (`src/Tests/Server.idr`) | Header splitting and parsing, malformed request lines, `Content-Length` values, listen addresses, UTF-8 validation, JSON escaping and values, response headers | 9 pass |
-| `tests/server/run.sh` | The real program on a socket, with curl: statuses 200, 400, 401, 404, 405 and 411, multi-statement requests, text outside ASCII, a rolled-back open transaction, a 60,000-row result, the row limit, 600 KiB bodies the server answers without using, five clients that disconnect mid-response, shutdown releasing the lock, a restart on the same port, token checks | 25 pass on macOS and on Alpine |
+| `server` unit suite (`src/Tests/Server.idr`) | Header splitting and parsing, malformed request lines, lone carriage returns, body framing, `Expect`, numbers, listen addresses, UTF-8 validation, JSON escaping and values, response headers | 12 pass |
+| `tests/server/run.sh` | The real program on a socket, with curl: statuses 200, 400, 401, 404, 405 and 411, multi-statement requests, comment-only text, text outside ASCII, a rolled-back open transaction, conflicting lengths, `Expect: 100-continue`, a 60,000-row result, the row limit for one statement and for a response, 600 KiB bodies the server answers without using, five clients that disconnect mid-response, shutdown releasing the lock, a restart on the same port, token checks | 29 pass on macOS and on Alpine |
 | `tests/container/run.sh` | The image with a read-only root and no capabilities: health, token, a query, `docker stop` exiting 0, data after a restart, a second container waiting while the first is alive, refusal of a stale lock without the option, takeover after `docker kill`, SIGTERM while waiting | 9 pass |
 
-Not tested: statuses 403, 413 and 500, load, many simultaneous clients,
-slow clients, and any deployment on AWS.
+Not tested: statuses 403, 413 and 500, the exit after a storage failure,
+load, many simultaneous clients, slow clients, and any deployment on AWS.

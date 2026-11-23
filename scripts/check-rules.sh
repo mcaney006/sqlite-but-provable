@@ -35,6 +35,7 @@ deny '%default[[:space:]]+partial|^[[:space:]]*partial[[:space:]]*$' 'a partiali
 # SQLite may be named in a comment that explains a dialect choice, never in
 # code: only tests/differential and bench/ run it, as separate programs.
 named="$(scan '(sqlite|SQLite)')"
+[ $? -le 1 ] || exit 2
 if printf '%s\n' "$named" | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(--|\|\|\|)' | grep .; then
   echo "check-rules: found a reference to SQLite in code" >&2
   status=1

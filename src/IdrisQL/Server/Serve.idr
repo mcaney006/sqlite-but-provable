@@ -24,6 +24,10 @@ import IdrisQL.Types
 --   POST /shutdown   from the loopback address only: close the database
 --                    and exit
 --
+-- The server also stops, with an error, when a storage failure has left
+-- the engine's connection unusable: restarting it runs recovery, and
+-- answering every later request with the same failure helps nobody.
+--
 -- A request is its own unit of work. A transaction it opens must be
 -- committed before the request ends; otherwise it is rolled back and the
 -- request fails. The connection closes after every response.
@@ -38,7 +42,7 @@ record ServerConfig where
   port : Int
   ||| When set, POST /query needs `Authorization: Bearer <token>`.
   token : Maybe String
-  ||| Largest result a statement may return.
+  ||| Most rows one response may hold, over all its statements.
   maxRows : Nat
   ||| Largest request body, in bytes.
   maxBody : Int
@@ -88,25 +92,29 @@ respond sock status json = do
 errorBody : String -> String
 errorBody msg = jsonObject [("error", jsonString msg)]
 
--- Read until the header block is complete.
+-- Read until the header block is complete. Every receive that succeeds
+-- brings at least one byte, so the fuel bounds the bytes read, however
+-- small the pieces a header arrives in.
 readHead : Socket -> (fuel : Nat) -> List Bits8 -> IO (Maybe (Request, List Bits8))
 readHead sock Z acc = pure Nothing
 readHead sock (S fuel) acc =
   case splitHead acc of
-    Just (top, rest) => pure (map (\req => (req, rest)) (parseHead top))
+    Just (top, rest) =>
+      pure (if length top > maxHead then Nothing else map (\req => (req, rest)) (parseHead top))
     Nothing =>
       if length acc > maxHead then pure Nothing
         else do
           Right more <- recvBytes sock 4096 | Left _ => pure Nothing
           readHead sock fuel (acc ++ more)
 
--- Read until `wanted` body bytes have arrived.
+-- Read until `wanted` body bytes have arrived, never asking for more than
+-- are still missing.
 readBody : Socket -> (wanted : Nat) -> (fuel : Nat) -> List (List Bits8) -> (have : Nat) -> IO (Maybe (List Bits8))
 readBody sock wanted Z chunks have = pure Nothing
 readBody sock wanted (S fuel) chunks have =
   if have >= wanted then pure (Just (take wanted (concat (reverse chunks))))
     else do
-      Right more <- recvBytes sock 65536 | Left _ => pure Nothing
+      Right more <- recvBytes sock (cast (min 65536 (minus wanted have))) | Left _ => pure Nothing
       readBody sock wanted fuel (more :: chunks) (have + length more)
 
 kind : DbError -> String
@@ -132,29 +140,31 @@ drain (S k) source acc = do
   Just row <- source | Nothing => pure (reverse acc)
   drain k source (jsonArray (map jsonValue row) :: acc)
 
-runOne : Engine -> ServerConfig -> String -> DB String
-runOne eng cfg sql = do
+-- One statement's entry in the response, and the rows it used up.
+runOne : Engine -> (budget : Nat) -> String -> DB (String, Nat)
+runOne eng budget sql = do
   r <- execute eng sql []
   case r of
     Rows names _ source => do
-      rows <- drain cfg.maxRows source []
-      pure (jsonObject [("columns", jsonArray (map jsonString names)), ("rows", jsonArray rows)])
-    Changed n => pure (jsonObject [("changed", show n)])
-    Done what => pure (jsonObject [("done", jsonString what)])
+      rows <- drain budget source []
+      pure (jsonObject [("columns", jsonArray (map jsonString names)), ("rows", jsonArray rows)], length rows)
+    Changed n => pure (jsonObject [("changed", show n)], 0)
+    Done what => pure (jsonObject [("done", jsonString what)], 0)
 
 -- Run the statements in order and stop at the first failure, reporting
--- how many completed before it.
-runAll : Engine -> ServerConfig -> List String -> List String -> IO (Either (Nat, DbError) (List String))
-runAll eng cfg [] done = pure (Right (reverse done))
-runAll eng cfg (s :: rest) done = do
-  Right one <- runDB (runOne eng cfg s)
+-- how many completed before it. The row limit is for the whole response:
+-- it is held in memory, whichever statement its rows come from.
+runAll : Engine -> (budget : Nat) -> List String -> List String -> IO (Either (Nat, DbError) (List String))
+runAll eng budget [] done = pure (Right (reverse done))
+runAll eng budget (s :: rest) done = do
+  Right (one, used) <- runDB (runOne eng budget s)
     | Left e => pure (Left (length done, e))
-  runAll eng cfg rest (one :: done)
+  runAll eng (minus budget used) rest (one :: done)
 
 query : Engine -> ServerConfig -> String -> IO (Int, String)
 query eng cfg sql = do
   let (stmts, rest) = splitStatements sql
-  r <- runAll eng cfg (stmts ++ (if trim rest == "" then [] else [rest])) []
+  r <- runAll eng cfg.maxRows (stmts ++ (if blankSql rest then [] else [rest])) []
   unfinished <- inTransaction eng
   when unfinished (ignore (runDB (execute eng "ROLLBACK" [])))
   pure $ case r of
@@ -176,11 +186,14 @@ loopback : SocketAddress -> Bool
 loopback (IPv4Addr 127 _ _ _) = True
 loopback _ = False
 
--- Bytes of the declared body that have not arrived yet. A body over the
--- limit counts as none: it is not worth reading.
-unread : ServerConfig -> Maybe Integer -> List Bits8 -> Integer
-unread cfg (Just n) early = if n > cast cfg.maxBody then 0 else n - cast (length early)
-unread cfg Nothing early = 0
+-- Bytes of the declared body that the client has sent or is sending and
+-- that have not been read. None when the body is over the limit, which is
+-- not worth reading, and none when the client is waiting for `100
+-- Continue` before it sends anything.
+unread : ServerConfig -> Request -> List Bits8 -> Integer
+unread cfg req early = case framing req of
+  Length n => if n > cast cfg.maxBody || expectsContinue req then 0 else n - cast (length early)
+  _ => 0
 
 -- Read and drop the rest of a body the request will not use. Closing a
 -- connection with unread data resets it, and the client can then lose the
@@ -193,53 +206,84 @@ discard sock left (S fuel) =
       Right more <- recvBytes sock 65536 | Left _ => pure ()
       discard sock (left - cast (length more)) fuel
 
-refuse : Socket -> (left : Integer) -> (status : Int) -> String -> IO Bool
+-- What the server does after a request.
+data Next = Continue | Stop | Broken
+
+refuse : Socket -> (left : Integer) -> (status : Int) -> String -> IO Next
 refuse sock left status why = do
   discard sock left (cast left + 16)
   respond sock status (errorBody why)
-  pure False
+  pure Continue
 
--- Answer one request. True when the server should stop.
-handle : Engine -> ServerConfig -> Socket -> SocketAddress -> IO Bool
+answer : Socket -> (status : Int) -> (json : String) -> IO Next
+answer sock status json = respond sock status json >> pure Continue
+
+unusable : String
+unusable = "a storage failure left the database connection unusable; the server is stopping so that a restart can run recovery"
+
+-- Run the SQL in a request body and answer it.
+runQuery : Engine -> ServerConfig -> Socket -> List Bits8 -> IO Next
+runQuery eng cfg sock body =
+  if not (validUtf8 body) then answer sock 400 (errorBody "request body is not UTF-8")
+  else do
+    Right sql <- runDB (packBytes body >>= \b => liftIO (bytesString b))
+      | Left e => answer sock 500 (errorBody (show e))
+    (status, json) <- query eng cfg sql
+    ok <- usable eng
+    if ok then answer sock status json
+      else do
+        -- A storage error is already the answer; anything else would
+        -- claim more than is known.
+        respond sock 500 (if status >= 500 then json else errorBody unusable)
+        pure Broken
+
+handle : Engine -> ServerConfig -> Socket -> SocketAddress -> IO Next
 handle eng cfg sock peer = do
-  Just (req, early) <- readHead sock 64 []
-    | Nothing => respond sock 400 (errorBody "malformed request") >> pure False
-  let declared = header "content-length" req >>= contentLength
-  let left = unread cfg declared early
+  Just (req, early) <- readHead sock (maxHead + 8) []
+    | Nothing => answer sock 400 (errorBody "malformed request")
+  let left = unread cfg req early
   case (req.method, req.path) of
-    ("GET", "/health") => respond sock 200 (jsonObject [("status", jsonString "ok")]) >> pure False
+    ("GET", "/health") => answer sock 200 (jsonObject [("status", jsonString "ok")])
     ("POST", "/shutdown") =>
       if loopback peer
-        then respond sock 200 (jsonObject [("status", jsonString "stopping")]) >> pure True
+        then respond sock 200 (jsonObject [("status", jsonString "stopping")]) >> pure Stop
         else refuse sock left 403 "shutdown is accepted from the loopback address only"
     ("POST", "/query") =>
       if not (authorized cfg req) then refuse sock left 401 "missing or wrong bearer token"
-      else case declared of
-        Nothing => respond sock 411 (errorBody "POST /query needs a Content-Length") >> pure False
-        Just n =>
-          if n > cast cfg.maxBody then respond sock 413 (errorBody "request body too large") >> pure False
+      else case framing req of
+        NoLength => answer sock 411 (errorBody "POST /query needs a Content-Length")
+        Conflicting => answer sock 400 (errorBody "conflicting Content-Length headers")
+        Length n =>
+          if n > cast cfg.maxBody then answer sock 413 (errorBody "request body too large")
           else do
+            -- A client that asked may be holding its body back until told.
+            when (expectsContinue req && cast (length early) < n) $ do
+              go <- toBytes "HTTP/1.1 100 Continue\r\n\r\n"
+              ignore (sendAll sock go)
             Just body <- readBody sock (cast n) (cast n + 16) [early] (length early)
-              | Nothing => respond sock 400 (errorBody "request body shorter than its Content-Length") >> pure False
-            if not (validUtf8 body) then respond sock 400 (errorBody "request body is not UTF-8") >> pure False
-              else do
-                Right sql <- runDB (packBytes body >>= \b => liftIO (bytesString b))
-                  | Left e => respond sock 500 (errorBody (show e)) >> pure False
-                (status, json) <- query eng cfg sql
-                respond sock status json
-                pure False
+              | Nothing => answer sock 400 (errorBody "request body shorter than its Content-Length")
+            runQuery eng cfg sock body
     (_, path) =>
       if path `elem` ["/health", "/query", "/shutdown"]
         then refuse sock left 405 "method not allowed"
         else refuse sock left 404 "no such path"
 
-acceptLoop : Engine -> ServerConfig -> Socket -> IO ()
-acceptLoop eng cfg listener = do
+-- `failures` counts accepts that failed in a row. A failure that does not
+-- clear, such as no file descriptors left, ends the server so that the
+-- caller can close the database.
+acceptLoop : Engine -> ServerConfig -> Socket -> (failures : Nat) -> IO (Either String ())
+acceptLoop eng cfg listener failures = do
   Right (client, peer) <- accept listener
-    | Left _ => acceptLoop eng cfg listener
-  stop <- handle eng cfg client peer
+    | Left e =>
+        if failures >= 50
+          then pure (Left ("cannot accept connections (error " ++ show e ++ ")"))
+          else usleep 100000 >> acceptLoop eng cfg listener (S failures)
+  next <- handle eng cfg client peer
   close client
-  if stop then pure () else acceptLoop eng cfg listener
+  case next of
+    Continue => acceptLoop eng cfg listener 0
+    Stop => pure (Right ())
+    Broken => pure (Left unusable)
 
 -- EADDRINUSE on Linux and on macOS.
 addressInUse : Int -> Bool
@@ -256,7 +300,9 @@ bindWithin cfg listener seconds = do
     Z => pure e
 
 ||| Serve `eng` until a shutdown request arrives. Returns `Left` when the
-||| address cannot be bound. The caller closes the engine.
+||| address cannot be bound, when connections can no longer be accepted,
+||| or when a storage failure has made the engine unusable. The caller
+||| closes the engine.
 export
 serve : Engine -> ServerConfig -> IO (Either String ())
 serve eng cfg = do
@@ -275,6 +321,6 @@ serve eng cfg = do
     | e => close listener >> pure (Left ("cannot listen (error " ++ show e ++ ")"))
   _ <- fPutStrLn stderr ("idrisql: serving on " ++ cfg.host ++ ":" ++ show cfg.port
                          ++ (if isNothing cfg.token then ", no token required" else ", bearer token required"))
-  acceptLoop eng cfg listener
+  result <- acceptLoop eng cfg listener 0
   close listener
-  pure (Right ())
+  pure result

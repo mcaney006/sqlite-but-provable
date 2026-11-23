@@ -132,6 +132,11 @@ readMeta pool = withPage pool 0 $ \p => do
 guarded : Pager -> DB a -> DB a
 guarded pg act = catchDB act (\e => writeIORef pg.poisoned True >> throw e)
 
+||| True once a storage failure has left the pool in an unknown state.
+export
+isPoisoned : Pager -> IO Bool
+isPoisoned pg = readIORef pg.poisoned
+
 ||| Fails once a storage failure has left the pool in an unknown state.
 export
 ensureUsable : Pager -> DB ()

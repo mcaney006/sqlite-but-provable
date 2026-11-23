@@ -72,6 +72,8 @@ else bad "the row was not there after a restart"; fi
 run "$name-2" "$((port + 1))" -e IDRISQL_BREAK_LOCK=1 -e IDRISQL_LOCK_STALE_SECONDS=6
 sleep 9
 if curl -s -m 1 "$second/health" >/dev/null 2>&1; then bad "a second container opened a database whose holder is alive"
+elif [ "$($docker inspect -f '{{.State.Running}}' "$name-2")" != true ]; then bad "the second container exited when it should have waited"
+elif ! $docker logs "$name-2" 2>&1 | grep -q 'waiting'; then bad "the second container did not say it was waiting"
 elif [ "$(query "$first" 'SELECT body FROM note')" = "$kept" ]; then ok
 else bad "the first container stopped answering while a second one waited"; fi
 

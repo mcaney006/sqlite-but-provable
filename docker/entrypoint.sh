@@ -7,7 +7,9 @@
 #
 # Environment:
 #   IDRISQL_DATABASE    database directory (default /data/main.idb)
-#   IDRISQL_PORT        port to serve on (default 5480)
+#   IDRISQL_PORT        port to serve on (default 5480). Set the port here,
+#                       not with --serve: the stop request and the health
+#                       check go to this one.
 #   IDRISQL_TOKEN       bearer token POST /query requires; unset means none
 #   IDRISQL_MAX_ROWS    largest result a statement may return (default 100000)
 #   IDRISQL_BREAK_LOCK  1 to take over a lock whose holder has stopped
@@ -28,10 +30,24 @@ db="${IDRISQL_DATABASE:-/data/main.idb}"
 port="${IDRISQL_PORT:-5480}"
 alive="$db.alive"
 
-# Mark this container alive until process $1 is gone.
+# Mark this container alive until process $1 is gone. If the mark cannot
+# be written five times running, another container may soon take this one
+# for dead, so the process is killed first: a killed process is a case
+# recovery handles, two writers are not.
 heartbeat() {
   touch "$alive"
-  ( while kill -0 "$1" 2>/dev/null; do sleep 2; touch "$alive" 2>/dev/null || true; done ) &
+  (
+    missed=0
+    while kill -0 "$1" 2>/dev/null; do
+      sleep 2
+      if touch "$alive" 2>/dev/null; then missed=0; else missed=$((missed + 1)); fi
+      if [ "$missed" -ge 5 ]; then
+        echo "idrisql: cannot write $alive; stopping so that no other container opens the database alongside this one" >&2
+        kill -9 "$1" 2>/dev/null || true
+        exit 0
+      fi
+    done
+  ) &
 }
 
 # Seconds since the lock holder last marked itself alive. Both times are
@@ -82,7 +98,7 @@ case "${1:-serve}" in
       signalled=1
       [ -n "$child" ] || return 0
       while kill -0 "$child" 2>/dev/null; do
-        wget -q -O /dev/null --post-data= "http://127.0.0.1:$port/shutdown" 2>/dev/null && break
+        wget -q -Y off -O /dev/null --post-data= "http://127.0.0.1:$port/shutdown" 2>/dev/null && break
         sleep 1
       done
     }
@@ -95,13 +111,15 @@ case "${1:-serve}" in
     [ "$signalled" = 0 ] || stop
 
     # A signal interrupts wait before the program has exited; wait again
-    # for its real status.
+    # for its real status. 127 means the earlier wait had already collected
+    # it, and that status stands.
     status=0
     wait "$child" || status=$?
     while [ "$signalled" = 1 ]; do
       signalled=0
-      status=0
-      wait "$child" || status=$?
+      again=0
+      wait "$child" || again=$?
+      [ "$again" = 127 ] || status=$again
     done
     exit "$status"
     ;;

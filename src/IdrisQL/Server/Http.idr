@@ -45,11 +45,20 @@ headerLine line =
        Just (':', value) => Just (toLower (trim name), trim value)
        _ => Nothing
 
+-- A carriage return that does not start a line break. A proxy in front
+-- may read it as one, and would then see a different request.
+bareCR : List Bits8 -> Bool
+bareCR (13 :: 10 :: rest) = bareCR rest
+bareCR (13 :: _) = True
+bareCR (_ :: rest) = bareCR rest
+bareCR [] = False
+
 ||| Parse a request line and headers. `Nothing` when the request line is
-||| not `METHOD SP PATH SP HTTP/1.x`.
+||| not `METHOD SP PATH SP HTTP/1.x`, or a carriage return stands alone.
 export
 parseHead : List Bits8 -> Maybe Request
 parseHead bytes =
+  if bareCR bytes then Nothing else
   case lines (pack (filter (/= '\r') (unpack (ascii bytes)))) of
     [] => Nothing
     (first :: rest) => case words first of
@@ -59,14 +68,54 @@ parseHead bytes =
           else Nothing
       _ => Nothing
 
-||| The value of a Content-Length header: decimal digits and nothing else.
-||| Eighteen digits is far past any size the server accepts and still fits
-||| every integer type, so a longer value is refused, not wrapped.
+||| A number written as decimal digits and nothing else. Eighteen digits
+||| is far past any size or port the server accepts and still fits every
+||| integer type, so a longer value is refused, not wrapped.
 export
-contentLength : String -> Maybe Integer
-contentLength s =
+decimal : String -> Maybe Integer
+decimal s =
   let cs = unpack s
   in if cs /= [] && length cs <= 18 && all isDigit cs then parseInteger s else Nothing
+
+||| How a request says where its body ends.
+public export
+data Framing
+  = ||| No usable Content-Length, or a Transfer-Encoding, which this server
+    ||| does not read.
+    NoLength
+  | Length Integer
+  | ||| Content-Length headers that disagree.
+    Conflicting
+
+export
+Eq Framing where
+  NoLength == NoLength = True
+  Length a == Length b = a == b
+  Conflicting == Conflicting = True
+  _ == _ = False
+
+export
+Show Framing where
+  show NoLength = "NoLength"
+  show (Length n) = "Length " ++ show n
+  show Conflicting = "Conflicting"
+
+||| The body length a request declares. A request that also names a
+||| Transfer-Encoding is not given the benefit of its Content-Length: a
+||| proxy in front may have framed it the other way.
+export
+framing : Request -> Framing
+framing req =
+  if isJust (header "transfer-encoding" req) then NoLength
+  else case nub (map snd (filter ((== "content-length") . fst) req.headers)) of
+    [] => NoLength
+    [v] => maybe NoLength Length (decimal v)
+    _ => Conflicting
+
+||| True when the request asks for `100 Continue` before it sends its body.
+export
+expectsContinue : Request -> Bool
+expectsContinue req = map toLower (header "expect" req) == Just "100-continue"
 
 ||| True for an IPv4 address written as four decimal numbers, each 0 to 255.
 ||| A host name is not accepted: the socket library does not resolve names

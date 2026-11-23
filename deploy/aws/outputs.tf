@@ -1,5 +1,5 @@
 output "endpoint" {
-  description = "Base URL of the server, reachable from the allowed networks."
+  description = "Base URL of the server, reachable from the allowed networks. It uses the load balancer's own name, which a certificate for your domain does not cover: with certificate_arn set, point a DNS alias at load_balancer_dns_name and use that name."
   value       = "${var.certificate_arn == null ? "http" : "https"}://${aws_lb.this.dns_name}"
 }
 

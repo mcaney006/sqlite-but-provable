@@ -1,7 +1,7 @@
 # Architecture
 
 IdrisQL is one Idris 2 package of 36 library modules and a shell, about
-10,500 lines. The engine depends on the compiler's `base` and `linear`
+10,600 lines. The engine depends on the compiler's `base` and `linear`
 packages and nothing else; the HTTP server adds `network`, which also ships
 with the compiler. A statement passes through the layers below from top to
 bottom.

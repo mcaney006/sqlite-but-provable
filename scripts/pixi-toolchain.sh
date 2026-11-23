@@ -8,9 +8,12 @@ tool="${IDRISQL_TOOLCHAIN:?run this through pixi: pixi run toolchain}"
 chez_version="${IDRISQL_CHEZ_VERSION:?}"
 idris_version="${IDRISQL_IDRIS2_VERSION:?}"
 
-if "$tool/bin/idris2" --version 2>/dev/null | grep -q "version $idris_version"; then
+# The marker is written last, so an installation that stopped halfway,
+# with the compiler in place and a library missing, is built again.
+if [ -e "$tool/.complete" ] && "$tool/bin/idris2" --version 2>/dev/null | grep -q "version $idris_version"; then
   exit 0
 fi
+rm -f "$tool/.complete"
 
 case "$tool" in
   *" "*) echo "toolchain: '$tool' has a space in it; set IDRISQL_TOOLCHAIN to a path without one" >&2; exit 1 ;;
@@ -46,3 +49,4 @@ make install PREFIX="$tool" >install.log 2>&1 || { tail -40 install.log; exit 1;
 cd "$tool"
 rm -rf "$work"
 "$tool/bin/idris2" --version
+touch "$tool/.complete"

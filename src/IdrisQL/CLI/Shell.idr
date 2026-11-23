@@ -10,6 +10,8 @@ import IdrisQL.Catalog.Schema
 import IdrisQL.Engine
 import IdrisQL.Error
 import IdrisQL.Query.Statement
+import IdrisQL.SQL.Lexer
+import IdrisQL.SQL.Token
 import IdrisQL.Storage.BufferPool
 import IdrisQL.Storage.FileIO
 import IdrisQL.Storage.Pager
@@ -31,6 +33,15 @@ record ShellConfig where
 
 data Lex = Code | InString | InIdent | LineComment | BlockComment
 
+||| True for text with nothing to run: white space and comments only. Text
+||| the lexer rejects, such as an unterminated comment, is not blank, so
+||| that running it reports the error.
+export
+blankSql : String -> Bool
+blankSql text = case tokenize text of
+  Right [MkToken _ EOFTok] => True
+  _ => False
+
 ||| The complete statements in `text` and the unfinished remainder. A
 ||| semicolon inside a string, a quoted identifier or a comment does not
 ||| end a statement.
@@ -39,7 +50,7 @@ splitStatements : String -> (List String, String)
 splitStatements text = go Code [] [] (unpack text)
   where
     emit : List Char -> List String -> List String
-    emit acc done = let s = pack (reverse acc) in if trim s == "" then done else s :: done
+    emit acc done = let s = pack (reverse acc) in if blankSql s then done else s :: done
 
     go : Lex -> (acc : List Char) -> (done : List String) -> List Char -> (List String, String)
     go _ acc done [] = (reverse done, pack (reverse acc))
@@ -220,7 +231,7 @@ runText eng cfg text =
         Right _ => pure True
         Left e => complain ("Error: " ++ show e) >> pure False
     else let (stmts, rest) = splitStatements text
-         in go (stmts ++ (if trim rest == "" then [] else [rest]))
+         in go (stmts ++ (if blankSql rest then [] else [rest]))
   where
     go : List String -> IO Bool
     go [] = pure True
